@@ -18,14 +18,6 @@ export default function CookiePolicy() {
    * ============================================================
    * MODIRA — COOKIE POLICY HEADER
    * ============================================================
-   *
-   * Estado inicial:
-   * - Header transparente.
-   *
-   * Al hacer scroll:
-   * - Header con fondo blanco.
-   *
-   * ============================================================
    */
 
   useEffect(() => {
@@ -66,54 +58,54 @@ export default function CookiePolicy() {
         <Header />
       </div>
 
-      {/* ========================================================
-          CABECERA DE LA PÁGINA
-          ======================================================== */}
+{/* ========================================================
+    CABECERA DE LA PÁGINA
+    ======================================================== */}
 
-      <section className="pt-32 pb-14 md:pt-36 md:pb-16 bg-white border-b border-gray-100">
-        <div className="container-lg mx-auto px-6 md:px-10 lg:px-12">
-          <div className="max-w-5xl mx-auto">
-            <button
-              onClick={() => setLocation("/")}
-              className="inline-flex items-center gap-2 text-sm font-medium text-[#1E3A8A] hover:text-[#16306F] transition-colors mb-8"
-            >
-              <ArrowLeft size={18} />
-              Volver
-            </button>
+<section className="pt-32 pb-14 md:pt-36 md:pb-16 bg-white border-b border-gray-100">
+  <div className="container-lg mx-auto px-6 md:px-10 lg:px-12">
+    <div className="max-w-5xl mx-auto">
+      <button
+        onClick={() => window.history.back()}
+        className="inline-flex items-center gap-2 text-sm font-medium text-[#1E3A8A] hover:text-[#16306F] transition-colors mb-8"
+      >
+        <ArrowLeft size={18} />
+        Volver
+      </button>
 
-            <div className="max-w-4xl">
-              <p className="text-sm font-semibold uppercase tracking-wider text-[#1E3A8A] mb-3">
-                Área legal
-              </p>
+      <div className="max-w-4xl">
+        <p className="text-sm font-semibold uppercase tracking-wider text-[#1E3A8A] mb-3">
+          Área legal
+        </p>
 
-              <div className="flex items-start gap-4">
-                <div className="hidden sm:flex flex-shrink-0 w-12 h-12 rounded-xl bg-[#EFF6FF] items-center justify-center mt-1">
-                  <Cookie
-                    size={24}
-                    className="text-[#1E3A8A]"
-                  />
-                </div>
+        <div className="flex items-start gap-4">
+          <div className="hidden sm:flex flex-shrink-0 w-12 h-12 rounded-xl bg-[#EFF6FF] items-center justify-center mt-1">
+            <Cookie
+              size={24}
+              className="text-[#1E3A8A]"
+            />
+          </div>
 
-                <div>
-                  <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-[#1E3A8A] mb-5">
-                    Política de Cookies
-                  </h1>
+          <div>
+            <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-[#1E3A8A] mb-5">
+              Política de Cookies
+            </h1>
 
-                  <p className="text-base md:text-lg text-gray-500 leading-relaxed max-w-3xl">
-                    Información sobre las cookies y tecnologías similares
-                    utilizadas en la web de Modira, sus finalidades y la
-                    gestión de las preferencias del usuario.
-                  </p>
+            <p className="text-base md:text-lg text-gray-500 leading-relaxed max-w-3xl">
+              Información sobre las cookies y tecnologías similares
+              utilizadas en la web de Modira, sus finalidades y la
+              gestión de las preferencias del usuario.
+            </p>
 
-                  <div className="mt-6 text-sm text-gray-400">
-                    Última actualización: Septiembre de 2026
-                  </div>
-                </div>
-              </div>
+            <div className="mt-6 text-sm text-gray-400">
+              Última actualización: Septiembre de 2026
             </div>
           </div>
         </div>
-      </section>
+      </div>
+    </div>
+  </div>
+</section>
 
       {/* ========================================================
           CONTENIDO
@@ -1097,12 +1089,29 @@ export default function CookiePolicy() {
 
             <div className="mt-8 text-center">
               <button
-                onClick={() => setLocation("/")}
-                className="inline-flex items-center gap-2 text-sm font-medium text-[#1E3A8A] hover:text-[#16306F] transition-colors"
-              >
-                <ArrowLeft size={16} />
-                Volver a Modira
-              </button>
+  onClick={() => {
+    const previousPage = sessionStorage.getItem(
+      "modira_previous_page"
+    );
+
+    if (previousPage) {
+      const { url, scrollY } = JSON.parse(previousPage);
+
+      sessionStorage.setItem(
+        "modira_restore_scroll",
+        String(scrollY)
+      );
+
+      window.location.href = url;
+    } else {
+      window.location.href = "/";
+    }
+  }}
+  className="inline-flex items-center gap-2 text-sm font-medium text-[#1E3A8A] hover:text-[#16306F] transition-colors mb-8"
+>
+  <ArrowLeft size={18} />
+  Volver
+</button>
             </div>
           </div>
         </div>

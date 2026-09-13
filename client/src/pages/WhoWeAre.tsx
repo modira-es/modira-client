@@ -1988,11 +1988,15 @@ export default function WhoWeAre() {
 
             <div className="mx-auto max-w-4xl text-center">
 
-              <div className="scroll-reveal-item mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#173B8F]/10 text-[#173B8F]">
+              <div className="scroll-reveal-item mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#173B8F]/10">
 
-                <Sparkles className="h-7 w-7" />
+  <img
+    src={import.meta.env.VITE_APP_LOGO_DARK}
+    alt="Logo de Modira"
+    className="h-9 w-auto object-contain"
+  />
 
-              </div>
+</div>
 
               <h2 className="scroll-reveal-item mt-5 text-3xl font-bold text-[#102A66] md:text-4xl">
                 ¿Y si parte del trabajo de tu empresa pudiera hacerse solo?

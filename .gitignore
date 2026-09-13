@@ -9,7 +9,8 @@ dist/
 .env
 .env.*
 
-
+# Backups de base de datos — nunca subir al repositorio
+backups/
 
 # Sistema
 .DS_Store
@@ -20,3 +21,4 @@ Thumbs.db
 .idea/
 
 supabase/.temp/
+scripts/backup-password.txt

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import ClientRoute from "@/components/ClientRoute";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -30,7 +31,7 @@ import HowWeWorkGuide from "./pages/HowWeWorkGuide";
 import ServicesGuide from "./pages/ServicesGuide";
 import AboutUs from "./pages/WhoWeAre";
 import UserGuide from "./pages/UserGuide";
-
+import AuditConditions from "./pages/AuditConditions";
 
 function Router() {
   return (
@@ -45,7 +46,8 @@ function Router() {
       <Route path="/servicios" component={ServicesGuide} />
       <Route path="/quienes-somos" component={AboutUs} />
       <Route path="/guia-usuario" component={UserGuide} />
-
+      <Route path="/condiciones-auditoria-gratuita" component={AuditConditions} />
+      
       
       
       <Route
@@ -108,6 +110,29 @@ function Router() {
 }
 
 function App() {
+  useEffect(() => {
+    const savedScroll = sessionStorage.getItem(
+      "modira_restore_scroll"
+    );
+
+    if (!savedScroll) return;
+
+    sessionStorage.removeItem("modira_restore_scroll");
+
+    const scrollY = Number(savedScroll);
+
+    if (!Number.isFinite(scrollY)) return;
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.scrollTo({
+          top: scrollY,
+          behavior: "instant",
+        });
+      });
+    });
+  }, []);
+
   return (
     <ErrorBoundary>
       <AuthProvider>

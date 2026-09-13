@@ -535,7 +535,8 @@ export default function Home() {
     empleados: "",
     proceso: "",
   });
-
+  const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
+  const [auditTermsAccepted, setAuditTermsAccepted] = useState(false);
   const [savingsData, setSavingsData] = useState({
     employees: 5,
     hoursPerWeek: 10,
@@ -553,7 +554,12 @@ export default function Home() {
 
 const handleFormSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
-
+  if (!privacyAcknowledged || !auditTermsAccepted) {
+    alert(
+      "Debes aceptar la Información de Privacidad y las Condiciones de la Auditoría Gratuita."
+    );
+    return;
+  }
   try {
     // AUDITORÍA V-10:
     //
@@ -567,6 +573,8 @@ const handleFormSubmit = async (e: React.FormEvent) => {
       p_empresa: formData.empresa,
       p_empleados: formData.empleados,
       p_proceso: formData.proceso,
+      p_privacy_acknowledged: privacyAcknowledged,
+      p_audit_terms_accepted: auditTermsAccepted,
     });
 
     if (error) {
@@ -592,6 +600,9 @@ const handleFormSubmit = async (e: React.FormEvent) => {
       empleados: "",
       proceso: "",
     });
+    setPrivacyAcknowledged(false);
+    setAuditTermsAccepted(false);
+
   } catch (error) {
     console.error("Error inesperado:", error);
     alert("Ha ocurrido un error inesperado.");
@@ -1845,7 +1856,7 @@ const handleFormSubmit = async (e: React.FormEvent) => {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-[#182230] mb-2">
-                    Email
+                    Correo electrónico
                   </label>
                   <input
                     type="email"
@@ -1896,23 +1907,68 @@ const handleFormSubmit = async (e: React.FormEvent) => {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-[#182230] mb-2">
-                  ¿Qué proceso te gustaría automatizar?
-                </label>
-                <textarea
-                  name="proceso"
-                  value={formData.proceso}
-                  onChange={handleFormChange}
-                  required
-                  rows={4}
-                  className="w-full px-4 py-3 border border-[#E8ECF2] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#173B8F] bg-white"
-                  placeholder="Describe brevemente los procesos que consumen más tiempo en tu empresa..."
-                />
-              </div>
+  <label className="block text-sm font-semibold text-[#182230] mb-2">
+    ¿Qué proceso te gustaría automatizar?
+  </label>
 
+  <textarea
+    name="proceso"
+    value={formData.proceso}
+    onChange={handleFormChange}
+    required
+    rows={4}
+    maxLength={4000}
+    className="w-full px-4 py-3 border border-[#E8ECF2] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#173B8F] bg-white"
+    placeholder="Describe brevemente los procesos que consumen más tiempo en tu empresa..."
+  />
+
+  <div className="mt-1 text-right text-xs text-gray-500">
+    {4000 - formData.proceso.length} caracteres restantes
+  </div>
+</div>
+
+                            <div className="space-y-4 pt-2">
+  <label className="flex items-start gap-3 cursor-pointer">
+    
+    <input
+      type="checkbox"
+      checked={privacyAcknowledged}
+      onChange={(e) =>
+        setPrivacyAcknowledged(e.target.checked)
+      }
+      required
+      className="mt-1 h-4 w-4 shrink-0 rounded border-[#E8ECF2] text-[#173B8F] focus:ring-[#173B8F]"
+    />
+    <span className="text-sm text-[#52627A] leading-5">
+      He leído la Información de Privacidad y he sido
+      informado/a sobre el tratamiento de mis datos personales.
+    </span>
+  </label>
+
+  <label className="flex items-start gap-3 cursor-pointer">
+    <input
+      type="checkbox"
+      checked={auditTermsAccepted}
+      onChange={(e) =>
+        setAuditTermsAccepted(e.target.checked)
+      }
+      required
+      className="mt-1 h-4 w-4 shrink-0rounded border-[#E8ECF2] text-[#173B8F] focus:ring-[#173B8F]"
+    />
+    <span className="text-sm text-[#52627A] leading-5">
+      He leído y acepto las Condiciones de la Auditoría
+      Gratuita.
+    </span>
+  </label>
+
+  <p className="text-xs text-[#8B1E3F] ml-7">
+  Ambos campos son obligatorios.
+</p>
+</div>
               <Button
                 type="submit"
-                className="w-full bg-[#173B8F] hover:bg-[#102A66] text-white text-lg py-6 font-semibold"
+                disabled={!privacyAcknowledged || !auditTermsAccepted}
+                className="w-full bg-[#173B8F] hover:bg-[#102A66] text-white text-lg py-6 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Solicitar auditoría gratuita
               </Button>
@@ -1929,17 +1985,71 @@ const handleFormSubmit = async (e: React.FormEvent) => {
 
 
     {/* Footer */}
-<footer className="bg-[#102A66] text-white py-12">
-  <div className="container-lg mx-auto px-6 sm:px-8 lg:px-12 xl:px-16">
+<footer className="relative overflow-hidden bg-[#102A66] text-white py-12">
+
+  {/* ============================================================
+      PARTÍCULAS FLOTANTES
+      ============================================================ */}
+  <div
+    className="absolute inset-0 pointer-events-none overflow-hidden"
+    aria-hidden="true"
+  >
+    {Array.from({ length: 32 }).map((_, i) => (
+      <span
+        key={i}
+        className={`footer-particle footer-particle-${i % 4}`}
+        style={{
+          left: `${(i * 37 + 7) % 100}%`,
+          top: `${(i * 61 + 13) % 100}%`,
+          width: `${2 + (i % 4)}px`,
+          height: `${2 + (i % 4)}px`,
+          animationDuration: `${16 + (i % 7) * 2.5}s`,
+          animationDelay: `-${(i % 9) * 2.2}s`,
+          opacity: `${0.20 + (i % 5) * 0.055}`,
+        }}
+      />
+    ))}
+  </div>
+
+  {/* Contenido del footer */}
+  <div className="relative z-10 container-lg mx-auto px-6 sm:px-8 lg:px-12 xl:px-16">
     <div className="grid md:grid-cols-4 gap-8 mb-8">
 
       <div>
-        <div className="flex items-center gap-2 mb-4">
-          <div className="bg-white/10 p-1.5 rounded-lg">
-            <Zap className="h-5 w-5 text-white" />
-          </div>
-          <span className="text-xl font-bold">Modira</span>
-        </div>
+        <div className="flex items-center gap-3 mb-4">
+
+  {import.meta.env.VITE_APP_LOGO &&
+  !import.meta.env.VITE_APP_LOGO.startsWith("%") ? (
+    <img
+  src={import.meta.env.VITE_APP_LOGO}
+  alt="Logo de Modira"
+  className="
+    h-8
+    w-auto
+    object-contain
+    animate-[spin_4s_linear_infinite]
+  "
+/>
+  ) : (
+    <div className="p-1.5 rounded-lg bg-white/10">
+      <Zap className="h-5 w-5 text-white" />
+    </div>
+  )}
+
+  <span
+    className="
+      modira-font
+      text-lg
+      leading-none
+      flex
+      items-center
+      translate-y-[2px]
+    "
+  >
+    MODIRA
+  </span>
+
+</div>
 
         <p className="text-white/70 text-sm mb-5">
           Automatización inteligente para empresas.
@@ -1947,6 +2057,7 @@ const handleFormSubmit = async (e: React.FormEvent) => {
 
         {/* Redes sociales */}
         <div className="flex items-center gap-3">
+
           {/* Instagram */}
           <a
             href="https://www.instagram.com/modira.es/"
@@ -1977,11 +2088,13 @@ const handleFormSubmit = async (e: React.FormEvent) => {
           >
             <MessageCircle className="h-5 w-5" />
           </button>
+
         </div>
       </div>
 
       <div>
         <h4 className="font-bold mb-4">Producto</h4>
+
         <ul className="space-y-2 text-white/70 text-sm">
           <li>
             <a
@@ -1991,7 +2104,14 @@ const handleFormSubmit = async (e: React.FormEvent) => {
               Servicios
             </a>
           </li>
-
+<li>
+            <a
+              href="/como-trabajamos"
+              className="hover:text-white transition"
+            >
+              Cómo trabajamos
+            </a>
+          </li>
           <li>
             <a
               href="#faq"
@@ -2005,7 +2125,16 @@ const handleFormSubmit = async (e: React.FormEvent) => {
 
       <div>
         <h4 className="font-bold mb-4">Empresa</h4>
+
         <ul className="space-y-2 text-white/70 text-sm">
+<li>
+            <a
+              href="/quienes-somos"
+              className="hover:text-white transition"
+            >
+              Quiénes somos
+            </a>
+          </li>
           <li>
             <a
               href="/area-cliente"
@@ -2017,10 +2146,10 @@ const handleFormSubmit = async (e: React.FormEvent) => {
 
           <li>
             <a
-              href="/empleados/login"
+              href="/guia-usuario"
               className="hover:text-white transition"
             >
-              Área de Empleados
+              Guía de Usuario
             </a>
           </li>
 
@@ -2032,15 +2161,45 @@ const handleFormSubmit = async (e: React.FormEvent) => {
               Contacto
             </a>
           </li>
+
         </ul>
       </div>
 
       <div>
         <h4 className="font-bold mb-4">Legal</h4>
+
         <ul className="space-y-2 text-white/70 text-sm">
+
+          <li>
+            <a
+              href="/aviso-legal"
+              onClick={() => {
+                sessionStorage.setItem(
+                  "modira_previous_page",
+                  JSON.stringify({
+                    url: window.location.href,
+                    scrollY: window.scrollY,
+                  })
+                );
+              }}
+              className="hover:text-white transition"
+            >
+              Aviso Legal
+            </a>
+          </li>
+
           <li>
             <a
               href="/politica-privacidad"
+              onClick={() => {
+                sessionStorage.setItem(
+                  "modira_previous_page",
+                  JSON.stringify({
+                    url: window.location.href,
+                    scrollY: window.scrollY,
+                  })
+                );
+              }}
               className="hover:text-white transition"
             >
               Política de Privacidad
@@ -2050,6 +2209,15 @@ const handleFormSubmit = async (e: React.FormEvent) => {
           <li>
             <a
               href="/terminos"
+              onClick={() => {
+                sessionStorage.setItem(
+                  "modira_previous_page",
+                  JSON.stringify({
+                    url: window.location.href,
+                    scrollY: window.scrollY,
+                  })
+                );
+              }}
               className="hover:text-white transition"
             >
               Términos y Condiciones
@@ -2059,28 +2227,62 @@ const handleFormSubmit = async (e: React.FormEvent) => {
           <li>
             <a
               href="/politica-cookies"
+              onClick={() => {
+                sessionStorage.setItem(
+                  "modira_previous_page",
+                  JSON.stringify({
+                    url: window.location.href,
+                    scrollY: window.scrollY,
+                  })
+                );
+              }}
               className="hover:text-white transition"
             >
               Política de Cookies
             </a>
           </li>
+<li>
+            <a
+              href="/condiciones-auditoria-gratuita"
+              onClick={() => {
+                sessionStorage.setItem(
+                  "modira_previous_page",
+                  JSON.stringify({
+                    url: window.location.href,
+                    scrollY: window.scrollY,
+                  })
+                );
+              }}
+              className="hover:text-white transition"
+            >
+              Condiciones de auditoría gratuita
+            </a>
+          </li>
         </ul>
       </div>
+
     </div>
 
     <div className="border-t border-white/10 pt-8">
+
       <div className="grid md:grid-cols-2 gap-8 mb-4">
+
         <div className="text-white/70 text-xs">
           <p>
             <strong>Modira</strong>
           </p>
-          <p>Servicios de automatización empresarial</p>
+
+          <p>
+            Servicios de automatización empresarial
+          </p>
+
           <p className="mt-2">
             Email: info@modira.es
           </p>
         </div>
 
         <div className="text-white/70 text-xs text-right md:text-left">
+
           <p>
             © {new Date().getFullYear()} Modira. Todos los derechos reservados.
           </p>
@@ -2088,10 +2290,169 @@ const handleFormSubmit = async (e: React.FormEvent) => {
           <p className="mt-2">
             Cumplimos con RGPD, LOPDGDD y LSSI-CE
           </p>
+
         </div>
+
       </div>
+
     </div>
+
   </div>
+
+  {/* ============================================================
+      ANIMACIÓN DE PARTÍCULAS
+      ============================================================ */}
+  <style>{`
+
+    .footer-particle {
+      position: absolute;
+      display: block;
+      border-radius: 9999px;
+
+      /*
+       * Azul muy claro, pero NO blanco.
+       * Sobre #102A66 queda bastante sutil.
+       */
+      background: rgba(191, 219, 254, 0.65);
+
+      /*
+       * Un pequeño brillo para que se perciban
+       * sin resultar demasiado luminosas.
+       */
+      box-shadow:
+        0 0 6px rgba(191, 219, 254, 0.22);
+
+      will-change: transform, opacity;
+    }
+
+    /* Trayectoria 1 */
+    .footer-particle-0 {
+      animation-name: footerParticleOne;
+      animation-timing-function: ease-in-out;
+      animation-iteration-count: infinite;
+      animation-direction: alternate;
+    }
+
+    /* Trayectoria 2 */
+    .footer-particle-1 {
+      animation-name: footerParticleTwo;
+      animation-timing-function: ease-in-out;
+      animation-iteration-count: infinite;
+      animation-direction: alternate;
+    }
+
+    /* Trayectoria 3 */
+    .footer-particle-2 {
+      animation-name: footerParticleThree;
+      animation-timing-function: ease-in-out;
+      animation-iteration-count: infinite;
+      animation-direction: alternate;
+    }
+
+    /* Trayectoria 4 */
+    .footer-particle-3 {
+      animation-name: footerParticleFour;
+      animation-timing-function: ease-in-out;
+      animation-iteration-count: infinite;
+      animation-direction: alternate;
+    }
+
+    @keyframes footerParticleOne {
+      0% {
+        transform: translate3d(0, 0, 0);
+      }
+
+      25% {
+        transform: translate3d(35px, -45px, 0);
+      }
+
+      50% {
+        transform: translate3d(-25px, -85px, 0);
+      }
+
+      75% {
+        transform: translate3d(55px, -35px, 0);
+      }
+
+      100% {
+        transform: translate3d(-40px, 25px, 0);
+      }
+    }
+
+    @keyframes footerParticleTwo {
+      0% {
+        transform: translate3d(0, 0, 0);
+      }
+
+      25% {
+        transform: translate3d(-45px, 35px, 0);
+      }
+
+      50% {
+        transform: translate3d(30px, -55px, 0);
+      }
+
+      75% {
+        transform: translate3d(-60px, -20px, 0);
+      }
+
+      100% {
+        transform: translate3d(35px, 55px, 0);
+      }
+    }
+
+    @keyframes footerParticleThree {
+      0% {
+        transform: translate3d(0, 0, 0);
+      }
+
+      25% {
+        transform: translate3d(55px, 40px, 0);
+      }
+
+      50% {
+        transform: translate3d(15px, -70px, 0);
+      }
+
+      75% {
+        transform: translate3d(-50px, -30px, 0);
+      }
+
+      100% {
+        transform: translate3d(-25px, 65px, 0);
+      }
+    }
+
+    @keyframes footerParticleFour {
+      0% {
+        transform: translate3d(0, 0, 0);
+      }
+
+      25% {
+        transform: translate3d(-30px, -60px, 0);
+      }
+
+      50% {
+        transform: translate3d(60px, -20px, 0);
+      }
+
+      75% {
+        transform: translate3d(-45px, 50px, 0);
+      }
+
+      100% {
+        transform: translate3d(25px, -40px, 0);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .footer-particle {
+        animation: none !important;
+      }
+    }
+
+  `}</style>
+
 </footer>
 {/* Chatbot flotante */}
 <AIChatBot />
