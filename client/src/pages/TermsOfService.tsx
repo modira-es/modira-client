@@ -1045,7 +1045,7 @@ export default function TermsAndConditions() {
       title: "Versión",
       info: [
         ["Versión", "1.0"],
-        ["Fecha de elaboración", "13 de septiembre de 2026"],
+        ["Fecha de elaboración", "14 de septiembre de 2026"],
         ["Fecha de entrada en vigor", "[FECHA DE PUBLICACIÓN]"],
       ],
     },
@@ -1062,7 +1062,7 @@ export default function TermsAndConditions() {
         ["Marca", "MODIRA"],
         ["Titular / prestador", "Adrián Modino Merino"],
         ["NIF", "06641212P"],
-        ["Domicilio", "Calle Lisboa 25"],
+        ["Domicilio", "Calle Lisboa 25, 28670, Villaviciosa de Odón, Madrid, España"],
         
       ],
       afterInfo: [

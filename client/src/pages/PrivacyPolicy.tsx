@@ -110,11 +110,11 @@ const sections: Section[] = [
   {
     "id": "que-datos-personales-puede-tratar-2",
     "number": "2",
-    "title": "Qué datos personales puede tratar",
+    "title": "Qué datos personales puede tratar MODIRA",
     "blocks": [
       {
         "type": "p",
-        "text": "MODIRA Dependiendo de la utilización que realice cada persona de MODIRA, pueden tratarse las siguientes categorías:"
+        "text": "Dependiendo de la utilización que realice cada persona de MODIRA, pueden tratarse las siguientes categorías:"
       },
       {
         "type": "label",
@@ -289,7 +289,7 @@ const sections: Section[] = [
       },
       {
         "type": "subheading",
-        "text": "4.1. Gestión de cuentas y acceso"
+        "text": "Gestión de cuentas y acceso"
       },
       {
         "type": "p",
@@ -2009,11 +2009,11 @@ const sections: Section[] = [
       ],
       [
         "Fecha de elaboración",
-        "13 de septiembre de 2026"
+        "14 de septiembre de 2026"
       ],
       [
         "Fecha de entrada en vigor",
-        "13 de septiembre de 2026"
+        "14 de septiembre de 2026"
       ]
     ]
     
@@ -2051,12 +2051,12 @@ const sections: Section[] = [
         "Adrián Modino Merino"
       ],
       [
-        "NIF/CIF",
+        "NIF",
         "06641212P"
       ],
       [
         "Domicilio",
-        "Calle Lisboa 25"
+        "Calle Lisboa 25, 28670, Villaviciosa de Odón, Madrid, España"
       ],
       
     ],
@@ -2224,7 +2224,7 @@ export default function PrivacyPolicy() {
                       POLÍTICA DE PRIVACIDAD DE MODIRA
                     </p>
                     <p className="text-sm leading-7 text-gray-500">
-                      Última actualización: [FECHA]
+                      Última actualización: 14/09/2026
                     </p>
                   </div>
 
@@ -2405,7 +2405,7 @@ export default function PrivacyPolicy() {
 
                   <div className="mt-16 pt-8 border-t border-gray-100">
                     <p className="text-sm text-gray-400 leading-6">
-                      Versión 1.0 · Elaborado el 13 de septiembre de 2026.
+                      Versión 1.0 · Elaborado el 14 de septiembre de 2026.
                     </p>
                   </div>
 

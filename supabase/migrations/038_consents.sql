@@ -183,13 +183,13 @@ BEGIN
     END IF;
 
     NEW.content_hash :=
-        encode(
-            digest(
-                convert_to(NEW.content, 'UTF8'),
-                'sha256'
-            ),
-            'hex'
-        );
+    encode(
+        extensions.digest(
+            convert_to(NEW.content, 'UTF8'),
+            'sha256'
+        ),
+        'hex'
+    );
 
     RETURN NEW;
 END;
@@ -1279,14 +1279,14 @@ BEGIN
     -- --------------------------------------------------------
 
     v_identity_key :=
-        'audit:' ||
-        encode(
-            digest(
-                v_ip,
-                'sha256'
-            ),
-            'hex'
-        );
+    'audit:' ||
+    encode(
+        extensions.digest(
+            convert_to(v_ip, 'UTF8'),
+            'sha256'
+        ),
+        'hex'
+    );
 
 
     -- --------------------------------------------------------

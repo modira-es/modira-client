@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   AlertCircle,
   CheckCircle,
@@ -830,13 +830,24 @@ export default function Auth() {
                   />
 
                   <span className="text-sm text-gray-700">
-                    He leído y acepto las{" "}
-                    <span className="font-semibold text-[#1E3A8A]">
-                      Condiciones de Uso de MODIRA
-                    </span>
-                    .
-                    
-                  </span>
+  He leído y acepto los{" "}
+  <a
+    href="/terminos"
+    onClick={() => {
+      sessionStorage.setItem(
+        "modira_previous_page",
+        JSON.stringify({
+          url: window.location.href,
+          scrollY: window.scrollY,
+        })
+      );
+    }}
+    className="font-semibold text-[#1E3A8A] hover:underline"
+  >
+    Términos y Condiciones de Uso de MODIRA
+  </a>
+  .
+</span>
                 </label>
 
                 <label className="flex items-start gap-3 cursor-pointer">
@@ -860,16 +871,52 @@ export default function Auth() {
                   />
 
                   <span className="text-sm text-gray-700">
-                    He leído la Información de Privacidad y he sido informado/a sobre el tratamiento de mis datos personales.
-                    
-                  </span>
+  He leído la{" "}
+  <a
+    href="/politica-privacidad"
+    onClick={() => {
+      sessionStorage.setItem(
+        "modira_previous_page",
+        JSON.stringify({
+          url: window.location.href,
+          scrollY: window.scrollY,
+        })
+      );
+    }}
+    className="font-semibold text-[#1E3A8A] hover:underline"
+  >
+    Información de Privacidad
+  </a>{" "}
+  y he sido informado/a sobre el tratamiento de mis datos personales.
+</span>
                 </label>
 
                 <p className="text-xs text-[#8B1E3F]">
   Ambos campos son obligatorios.
 </p>
               </div>
+<div className="flex justify-center pt-2">
+  <Turnstile
+    siteKey={
+      import.meta.env
+        .VITE_TURNSTILE_SITE_KEY
+    }
+    onSuccess={(token) => {
+      setCaptchaToken(token);
+      setError(null);
+    }}
+    onExpire={() => {
+      setCaptchaToken(null);
+    }}
+    onError={() => {
+      setCaptchaToken(null);
 
+      setError(
+        "No se ha podido verificar el CAPTCHA. Inténtalo de nuevo."
+      );
+    }}
+  />
+</div>
               <Button
                 type="submit"
                 className="w-full bg-[#1E3A8A] hover:bg-[#1E3A8A]/90 text-white font-semibold py-2"
@@ -938,13 +985,24 @@ export default function Auth() {
                   />
 
                   <span className="text-sm text-gray-700">
-                    He leído y acepto las{" "}
-                    <span className="font-semibold text-[#1E3A8A]">
-                      Condiciones de Uso de MODIRA
-                    </span>
-                    .
-                    
-                  </span>
+  He leído y acepto los{" "}
+  <a
+    href="/terminos"
+    onClick={() => {
+      sessionStorage.setItem(
+        "modira_previous_page",
+        JSON.stringify({
+          url: window.location.href,
+          scrollY: window.scrollY,
+        })
+      );
+    }}
+    className="font-semibold text-[#1E3A8A] hover:underline"
+  >
+    Términos y Condiciones de Uso de MODIRA
+  </a>
+  .
+</span>
                 </label>
 
                 <label className="flex items-start gap-3 cursor-pointer">
@@ -968,9 +1026,24 @@ export default function Auth() {
                   />
 
                   <span className="text-sm text-gray-700">
-                    He leído la Información de Privacidad y he sido informado/a sobre el tratamiento de mis datos personales.
-                    
-                  </span>
+  He leído la{" "}
+  <a
+    href="/politica-privacidad"
+    onClick={() => {
+      sessionStorage.setItem(
+        "modira_previous_page",
+        JSON.stringify({
+          url: window.location.href,
+          scrollY: window.scrollY,
+        })
+      );
+    }}
+    className="font-semibold text-[#1E3A8A] hover:underline"
+  >
+    Información de Privacidad
+  </a>{" "}
+  y he sido informado/a sobre el tratamiento de mis datos personales.
+</span>
                 </label>
               </div>
 

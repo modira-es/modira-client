@@ -236,7 +236,7 @@ export default function FreeAuditConditions() {
                     Condiciones aplicables a la solicitud y realización de la auditoría inicial gratuita ofrecida por MODIRA.
                   </p>
                   <div className="mt-6 text-sm text-gray-400">
-                    Última actualización: 13 de septiembre de 2026
+                    Última actualización: 14 de septiembre de 2026
                   </div>
                 </div>
               </div>
@@ -361,8 +361,8 @@ export default function FreeAuditConditions() {
                     </p>
                     <div className="grid sm:grid-cols-3 gap-3 text-sm leading-7 text-gray-500">
                       <p><span className="font-medium text-gray-700">Versión:</span> 1.0</p>
-                      <p><span className="font-medium text-gray-700">Elaboración:</span> 13 de septiembre de 2026</p>
-                      <p><span className="font-medium text-gray-700">Entrada en vigor:</span> 13 de septiembre de 2026</p>
+                      <p><span className="font-medium text-gray-700">Elaboración:</span> 14 de septiembre de 2026</p>
+                      <p><span className="font-medium text-gray-700">Entrada en vigor:</span> 14 de septiembre de 2026</p>
                     </div>
                   </div>
 
@@ -389,7 +389,7 @@ export default function FreeAuditConditions() {
 
                   <div className="mt-16 pt-8 border-t border-gray-100">
                     <p className="text-sm text-gray-400 leading-6">
-                      Versión 1.0 · Elaborado el 13 de septiembre de 2026 · Entrada en vigor el 13 de septiembre de 2026.
+                      Versión 1.0 · Elaborado el 14 de septiembre de 2026 · Entrada en vigor el 14 de septiembre de 2026.
                     </p>
                   </div>
                 </div>

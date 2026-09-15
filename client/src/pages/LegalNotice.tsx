@@ -1043,15 +1043,15 @@ const sections: Section[] = [
           ],
           [
             "Fecha de elaboración",
-            "13 de septiembre de 2026"
+            "14 de septiembre de 2026"
           ],
           [
             "Fecha de entrada en vigor",
-            "13 de septiembre de 2026"
+            "14 de septiembre de 2026"
           ],
           [
             "Última actualización",
-            "13 de septiembre de 2026"
+            "14 de septiembre de 2026"
           ]
         ]
       }
@@ -1092,7 +1092,7 @@ const sections: Section[] = [
           
           [
             "Domicilio",
-            "Calle Lisboa 25"
+            "Calle Lisboa 25, 28670, Villaviciosa de Odón, Madrid, España"
           ]
           
         ]
@@ -1209,7 +1209,7 @@ export default function LegalNotice() {
                   </p>
 
                   <div className="mt-6 text-sm text-gray-400">
-                    Última actualización: 13 de septiembre de 2026
+                    Última actualización: 14 de septiembre de 2026
                   </div>
                 </div>
               </div>
@@ -1273,7 +1273,7 @@ export default function LegalNotice() {
                         <span className="font-medium text-gray-700">
                           Última actualización:
                         </span>{" "}
-                        13 de septiembre de 2026
+                        14 de septiembre de 2026
                       </p>
                       <p>
                         <span className="font-medium text-gray-700">
@@ -1410,7 +1410,7 @@ export default function LegalNotice() {
 
                   <div className="mt-16 pt-8 border-t border-gray-100">
                     <p className="text-sm text-gray-400 leading-6">
-                      Versión 1.0 · Elaborado el 13 de septiembre de 2026.
+                      Versión 1.0 · Elaborado el 14 de septiembre de 2026.
                     </p>
                   </div>
 

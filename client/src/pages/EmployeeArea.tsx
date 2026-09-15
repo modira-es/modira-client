@@ -224,7 +224,222 @@ export default function EmployeeArea() {
 
   const [companies, setCompanies] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
+// ============================================================
+// HITOS — PRUEBA PROVISIONAL
+// ============================================================
 
+const [selectedMilestoneProjectId, setSelectedMilestoneProjectId] =
+  useState("");
+
+const [projectMilestones, setProjectMilestones] =
+  useState<any[]>([]);
+
+const [projectProgress, setProjectProgress] =
+  useState<any | null>(null);
+
+const [loadingMilestones, setLoadingMilestones] =
+  useState(false);
+
+const [creatingMilestone, setCreatingMilestone] =
+  useState(false);
+
+const [milestoneForm, setMilestoneForm] = useState({
+  nombre: "",
+  descripcion: "",
+  fecha_prevista: "",
+});
+// ============================================================
+// HITOS — CARGAR HITOS Y PROGRESO
+// ============================================================
+
+const loadProjectMilestones = async (projectId: string) => {
+  if (!projectId) {
+    setProjectMilestones([]);
+    setProjectProgress(null);
+    return;
+  }
+
+  try {
+    setLoadingMilestones(true);
+
+    // --------------------------------------------------------
+    // HITOS
+    // --------------------------------------------------------
+
+    const {
+      data: milestonesData,
+      error: milestonesError,
+    } = await supabase
+      .from("project_milestones")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("orden", { ascending: true })
+      .order("created_at", { ascending: true });
+
+    if (milestonesError) {
+      throw milestonesError;
+    }
+
+    setProjectMilestones(milestonesData || []);
+
+    // --------------------------------------------------------
+    // PROGRESO
+    // --------------------------------------------------------
+
+    const {
+      data: progressData,
+      error: progressError,
+    } = await supabase
+      .from("project_progress")
+      .select(
+        "project_id, total_milestones, completed_milestones, progress_percentage"
+      )
+      .eq("project_id", projectId)
+      .maybeSingle();
+
+    if (progressError) {
+      throw progressError;
+    }
+
+    setProjectProgress(progressData || null);
+  } catch (error: any) {
+    console.error(
+      "[EmployeeArea] Error loading project milestones:",
+      error
+    );
+
+    setProjectMilestones([]);
+    setProjectProgress(null);
+
+    toast.error(
+      error?.message ||
+      "No se pudieron cargar los hitos del proyecto."
+    );
+  } finally {
+    setLoadingMilestones(false);
+  }
+};
+// ============================================================
+// HITOS — CREAR
+// ============================================================
+
+const handleCreateMilestone = async () => {
+  if (!selectedMilestoneProjectId) {
+    toast.error("Selecciona un proyecto.");
+    return;
+  }
+
+  if (!milestoneForm.nombre.trim()) {
+    toast.error("Escribe el nombre del hito.");
+    return;
+  }
+
+  if (!milestoneForm.fecha_prevista) {
+    toast.error("Selecciona una fecha prevista.");
+    return;
+  }
+
+  try {
+    setCreatingMilestone(true);
+
+    const {
+      data,
+      error,
+    } = await supabase.rpc(
+      "create_project_milestone",
+      {
+        p_project_id: selectedMilestoneProjectId,
+        p_nombre: milestoneForm.nombre.trim(),
+        p_descripcion:
+          milestoneForm.descripcion.trim() || null,
+        p_fecha_prevista: new Date(
+          milestoneForm.fecha_prevista
+        ).toISOString(),
+      }
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    console.log(
+      "[EmployeeArea] Milestone created:",
+      data
+    );
+
+    setMilestoneForm({
+      nombre: "",
+      descripcion: "",
+      fecha_prevista: "",
+    });
+
+    await loadProjectMilestones(
+      selectedMilestoneProjectId
+    );
+
+    toast.success("Hito creado correctamente.");
+  } catch (error: any) {
+    console.error(
+      "[EmployeeArea] Error creating milestone:",
+      error
+    );
+
+    toast.error(
+      error?.message ||
+      "No se pudo crear el hito."
+    );
+  } finally {
+    setCreatingMilestone(false);
+  }
+};
+// ============================================================
+// HITOS — CAMBIAR ESTADO
+// ============================================================
+
+const handleChangeMilestoneStatus = async (
+  milestoneId: string,
+  estado: "pendiente" | "en_curso" | "completado"
+) => {
+  try {
+    const {
+      data,
+      error,
+    } = await supabase.rpc(
+      "set_project_milestone_status",
+      {
+        p_milestone_id: milestoneId,
+        p_estado: estado,
+      }
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    console.log(
+      "[EmployeeArea] Milestone status updated:",
+      data
+    );
+
+    await loadProjectMilestones(
+      selectedMilestoneProjectId
+    );
+
+    toast.success(
+      `Hito actualizado a "${estado}".`
+    );
+  } catch (error: any) {
+    console.error(
+      "[EmployeeArea] Error updating milestone status:",
+      error
+    );
+
+    toast.error(
+      error?.message ||
+      "No se pudo actualizar el estado del hito."
+    );
+  }
+};
   // ============================================================
   // PRESUPUESTOS COMERCIALES
   // ============================================================
@@ -597,8 +812,8 @@ export default function EmployeeArea() {
       } = await supabase
         .from("projects")
         .select(
-          "id, nombre, company_id, client_id, user_id"
-        )
+  "id, nombre, company_id, client_id, user_id, estado"
+)
         .order("nombre", {
           ascending: true,
         });
@@ -2415,7 +2630,314 @@ export default function EmployeeArea() {
             onCreateProject={handleNewProject}
           />
         </div>
+{/* ============================================================
+    HITOS — PANEL PROVISIONAL DE PRUEBA
+    ============================================================ */}
 
+<div className="mt-8 rounded-lg border border-orange-300 bg-orange-50 p-6">
+
+  <h2 className="mb-2 text-lg font-bold text-orange-800">
+    PRUEBA PROVISIONAL — Gestión de hitos
+  </h2>
+
+  <p className="mb-6 text-sm text-orange-700">
+    Panel temporal para crear hitos y modificar su progreso.
+  </p>
+
+  {/* --------------------------------------------------------
+      SELECCIONAR PROYECTO
+      -------------------------------------------------------- */}
+
+  <div className="mb-6">
+
+    <label className="mb-2 block text-sm font-semibold">
+      Proyecto
+    </label>
+
+    <select
+      value={selectedMilestoneProjectId}
+      onChange={async (event) => {
+        const projectId = event.target.value;
+
+        setSelectedMilestoneProjectId(projectId);
+
+        await loadProjectMilestones(projectId);
+      }}
+      className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+    >
+
+      <option value="">
+        Selecciona un proyecto
+      </option>
+
+      {projects.map((project) => (
+        <option
+          key={project.id}
+          value={project.id}
+        >
+          {project.nombre}
+        </option>
+      ))}
+
+    </select>
+
+  </div>
+
+  {selectedMilestoneProjectId && (
+    <>
+
+      {/* ------------------------------------------------------
+          PROGRESO
+          ------------------------------------------------------ */}
+
+      <div className="mb-6 rounded-md border border-gray-200 bg-white p-4">
+
+        <div className="mb-2 flex items-center justify-between">
+
+          <span className="font-semibold">
+            Progreso
+          </span>
+
+          <span className="font-bold text-[#1E3A8A]">
+            {projectProgress?.progress_percentage ?? 0}%
+          </span>
+
+        </div>
+
+        <div className="mb-2 h-3 overflow-hidden rounded-full bg-gray-200">
+
+          <div
+            className="h-full bg-green-500 transition-all"
+            style={{
+              width: `${projectProgress?.progress_percentage ?? 0}%`,
+            }}
+          />
+
+        </div>
+
+        <p className="text-xs text-gray-500">
+
+          {projectProgress?.completed_milestones ?? 0}
+          {" / "}
+          {projectProgress?.total_milestones ?? 0}
+          {" hitos completados"}
+
+        </p>
+
+      </div>
+
+      {/* ------------------------------------------------------
+          CREAR HITO
+          ------------------------------------------------------ */}
+
+      <div className="mb-6 rounded-md border border-gray-200 bg-white p-4">
+
+        <h3 className="mb-4 font-semibold">
+          Crear nuevo hito
+        </h3>
+
+        <div className="space-y-3">
+
+          <input
+            type="text"
+            value={milestoneForm.nombre}
+            onChange={(event) =>
+              setMilestoneForm((current) => ({
+                ...current,
+                nombre: event.target.value,
+              }))
+            }
+            placeholder="Nombre del hito"
+            maxLength={200}
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+          />
+
+          <textarea
+            value={milestoneForm.descripcion}
+            onChange={(event) =>
+              setMilestoneForm((current) => ({
+                ...current,
+                descripcion: event.target.value,
+              }))
+            }
+            placeholder="Descripción (opcional)"
+            maxLength={2000}
+            rows={3}
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+          />
+
+          <div>
+
+            <label className="mb-1 block text-xs font-semibold text-gray-600">
+              Fecha prevista
+            </label>
+
+            <input
+              type="datetime-local"
+              value={milestoneForm.fecha_prevista}
+              onChange={(event) =>
+                setMilestoneForm((current) => ({
+                  ...current,
+                  fecha_prevista: event.target.value,
+                }))
+              }
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+            />
+
+          </div>
+
+          <button
+            type="button"
+            onClick={handleCreateMilestone}
+            disabled={creatingMilestone}
+            className="rounded-md bg-[#1E3A8A] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {creatingMilestone
+              ? "Creando..."
+              : "Crear hito"}
+          </button>
+
+        </div>
+
+      </div>
+
+      {/* ------------------------------------------------------
+          LISTADO DE HITOS
+          ------------------------------------------------------ */}
+
+      <div className="rounded-md border border-gray-200 bg-white p-4">
+
+        <div className="mb-4 flex items-center justify-between">
+
+          <h3 className="font-semibold">
+            Hitos del proyecto
+          </h3>
+
+          <button
+            type="button"
+            onClick={() =>
+              loadProjectMilestones(
+                selectedMilestoneProjectId
+              )
+            }
+            className="text-xs font-semibold text-[#1E3A8A] underline"
+          >
+            Recargar
+          </button>
+
+        </div>
+
+        {loadingMilestones ? (
+
+          <p className="text-sm text-gray-500">
+            Cargando hitos...
+          </p>
+
+        ) : projectMilestones.length === 0 ? (
+
+          <p className="text-sm text-gray-500">
+            Este proyecto todavía no tiene hitos.
+          </p>
+
+        ) : (
+
+          <div className="space-y-3">
+
+            {projectMilestones.map(
+              (milestone, index) => (
+
+                <div
+                  key={milestone.id}
+                  className="rounded-md border border-gray-200 p-4"
+                >
+
+                  <div className="mb-3 flex items-start justify-between gap-4">
+
+                    <div>
+
+                      <p className="font-semibold">
+                        {index + 1}. {milestone.nombre}
+                      </p>
+
+                      {milestone.descripcion && (
+                        <p className="mt-1 text-sm text-gray-500">
+                          {milestone.descripcion}
+                        </p>
+                      )}
+
+                      <p className="mt-2 text-xs text-gray-400">
+                        Fecha prevista:{" "}
+                        {new Date(
+                          milestone.fecha_prevista
+                        ).toLocaleString("es-ES")}
+                      </p>
+
+                    </div>
+
+                    <span className="text-xs font-semibold">
+                      {milestone.estado}
+                    </span>
+
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleChangeMilestoneStatus(
+                          milestone.id,
+                          "pendiente"
+                        )
+                      }
+                      className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs"
+                    >
+                      Pendiente
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleChangeMilestoneStatus(
+                          milestone.id,
+                          "en_curso"
+                        )
+                      }
+                      className="rounded border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs text-blue-700"
+                    >
+                      En curso
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleChangeMilestoneStatus(
+                          milestone.id,
+                          "completado"
+                        )
+                      }
+                      className="rounded border border-green-300 bg-green-50 px-3 py-1.5 text-xs text-green-700"
+                    >
+                      Completado
+                    </button>
+
+                  </div>
+
+                </div>
+
+              )
+            )}
+
+          </div>
+
+        )}
+
+      </div>
+
+    </>
+  )}
+
+</div>
         {/* ======================================================
             CLIENTES / PERFILES
             ====================================================== */}

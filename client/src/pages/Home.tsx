@@ -1940,9 +1940,24 @@ const handleFormSubmit = async (e: React.FormEvent) => {
       className="mt-1 h-4 w-4 shrink-0 rounded border-[#E8ECF2] text-[#173B8F] focus:ring-[#173B8F]"
     />
     <span className="text-sm text-[#52627A] leading-5">
-      He leído la Información de Privacidad y he sido
-      informado/a sobre el tratamiento de mis datos personales.
-    </span>
+  He leído la{" "}
+  <a
+    href="/politica-privacidad"
+    onClick={() => {
+      sessionStorage.setItem(
+        "modira_previous_page",
+        JSON.stringify({
+          url: window.location.href,
+          scrollY: window.scrollY,
+        })
+      );
+    }}
+    className="font-semibold text-[#1E3A8A] hover:underline"
+  >
+    Información de Privacidad
+  </a>{" "}
+  y he sido informado/a sobre el tratamiento de mis datos personales.
+</span>
   </label>
 
   <label className="flex items-start gap-3 cursor-pointer">
@@ -1953,12 +1968,27 @@ const handleFormSubmit = async (e: React.FormEvent) => {
         setAuditTermsAccepted(e.target.checked)
       }
       required
-      className="mt-1 h-4 w-4 shrink-0rounded border-[#E8ECF2] text-[#173B8F] focus:ring-[#173B8F]"
+      className="mt-1 h-4 w-4 shrink-0 rounded border-[#E8ECF2] text-[#173B8F] focus:ring-[#173B8F]"
     />
     <span className="text-sm text-[#52627A] leading-5">
-      He leído y acepto las Condiciones de la Auditoría
-      Gratuita.
-    </span>
+  He leído y acepto las{" "}
+  <a
+    href="/condiciones-auditoria-gratuita"
+    onClick={() => {
+      sessionStorage.setItem(
+        "modira_previous_page",
+        JSON.stringify({
+          url: window.location.href,
+          scrollY: window.scrollY,
+        })
+      );
+    }}
+    className="font-semibold text-[#1E3A8A] hover:underline"
+  >
+    Condiciones de la Auditoría Gratuita
+  </a>
+  .
+</span>
   </label>
 
   <p className="text-xs text-[#8B1E3F] ml-7">
