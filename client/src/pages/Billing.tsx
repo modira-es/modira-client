@@ -1,1439 +1,2508 @@
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLocation } from "wouter";
 import { supabase } from "@/lib/supabase";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
+import ClientFloatingActions from "@/components/ClientFloatingActions";
 import {
   AlertCircle,
-  ArrowLeft,
-  CheckCircle2,
-  CreditCard,
+  ArrowRight,
+  BriefcaseBusiness,
+  Check,
+  CircleHelp,
+  Clock3,
   Download,
-  Eye,
   FileText,
+  Home,
   Loader2,
+  LogOut,
+  Menu,
+  Receipt,
   Search,
-  XCircle,
+  UserRound,
+  Wrench,
+  X,
+  CreditCard,
+  Info,
+  Lock,
+  ShieldCheck,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { useLocation } from "wouter";
-import { toast } from "sonner";
+import { Input } from "@/components/ui/input";
+
+type InvoiceStatus = "pendiente" | "pagada" | "vencida" | "cancelada";
+type PaymentStatus = "pending" | "succeeded" | "failed" | "canceled";
 
 interface Invoice {
   id: string;
-  user_id: string;
-  company_id: string | null;
   project_id: string | null;
+  company_id: string | null;
+  user_id: string | null;
   numero_factura: string;
-  monto: number | string | null;
-  estado: string | null;
   fecha_emision: string | null;
   fecha_vencimiento: string | null;
+  fecha_pago: string | null;
   descripcion: string | null;
-  subtotal: number | string | null;
-  iva_porcentaje: number | string | null;
-  iva_importe: number | string | null;
+  subtotal: number | null;
+  iva_aplicado: boolean | null;
+  iva_porcentaje: number | null;
+  iva_importe: number | null;
+  irpf_aplicado: boolean | null;
+  irpf_porcentaje: number | null;
+  irpf_importe: number | null;
+  monto: number | null;
+  importe_a_pagar: number | null;
+  estado: InvoiceStatus;
   document_path: string | null;
+  rectifies_invoice_id: string | null;
+  rectification_reason: string | null;
+  created_at: string;
+  updated_at: string | null;
 }
 
-interface ProjectInfo {
+interface Project {
   id: string;
   nombre: string;
-  company_id: string | null;
+  user_id: string | null;
 }
 
-interface CompanyInfo {
+interface ProjectOwnerProfile {
   id: string;
-  company_name: string;
+  nombre: string | null;
 }
 
-const currency = new Intl.NumberFormat("es-ES", {
+interface Payment {
+  id: string;
+  invoice_id: string | null;
+  amount: number;
+  currency: string;
+  status: PaymentStatus | string;
+  description: string | null;
+  paid_at: string | null;
+  stripe_checkout_session_id: string | null;
+  stripe_payment_intent_id: string | null;
+  created_at: string;
+}
+
+type BillingDocument = { kind: "invoice"; data: Invoice };
+
+type BillingFilter = "all" | "pendiente" | "pagada" | "vencida" | "cancelada";
+
+const BILLING_FILTERS: BillingFilter[] = [
+  "all",
+  "pendiente",
+  "pagada",
+  "vencida",
+  "cancelada",
+];
+
+const euro = new Intl.NumberFormat("es-ES", {
   style: "currency",
   currency: "EUR",
+  minimumFractionDigits: 2,
 });
 
-const formatDate = (value: string | null) => {
-  if (!value) return "-";
+const longDate = new Intl.DateTimeFormat("es-ES", {
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
 
-  const date = new Date(value);
+const compactDate = new Intl.DateTimeFormat("es-ES", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
 
-  if (Number.isNaN(date.getTime())) return "-";
+const formatCurrency = (value: number | null | undefined) =>
+  euro.format(Number(value ?? 0));
 
-  return date.toLocaleDateString("es-ES");
-};
+const formatPaymentAmount = (
+  amount: number | null | undefined,
+  currency: string | null | undefined,
+) => {
+  const normalizedCurrency = String(currency || "EUR").toUpperCase();
 
-const normalizeStatus = (status: string | null) => {
-  const value = (status || "").toLowerCase().trim();
-
-  if (value === "pagada" || value === "paid") return "pagada";
-  if (value === "pendiente" || value === "pending") return "pendiente";
-  if (value === "vencida" || value === "overdue") return "vencida";
-  if (value === "cancelada" || value === "cancelled") return "cancelada";
-
-  return value || "pendiente";
-};
-
-const statusLabel = (status: string | null) => {
-  switch (normalizeStatus(status)) {
-    case "pagada":
-      return "Pagada";
-
-    case "pendiente":
-      return "Pendiente";
-
-    case "vencida":
-      return "Vencida";
-
-    case "cancelada":
-      return "Cancelada";
-
-    default:
-      return status || "Pendiente";
+  try {
+    return new Intl.NumberFormat("es-ES", {
+      style: "currency",
+      currency: normalizedCurrency,
+      minimumFractionDigits: 2,
+    }).format(Number(amount ?? 0) / 100);
+  } catch {
+    return `${(Number(amount ?? 0) / 100).toFixed(2)} ${normalizedCurrency}`;
   }
 };
 
-const canPayInvoice = (invoice: Invoice) => {
-  const status = normalizeStatus(invoice.estado);
+const formatDate = (value?: string | null) =>
+  value ? longDate.format(new Date(value)) : "Sin fecha";
 
-  return status === "pendiente" || status === "vencida";
+const formatCompactDate = (value?: string | null) =>
+  value ? compactDate.format(new Date(value)) : "Sin fecha";
+
+const normalize = (value?: string | null) =>
+  String(value || "").trim().toLowerCase();
+
+const displayStatus = (status: InvoiceStatus | string | null | undefined) => {
+  switch (normalize(status)) {
+    case "pendiente":
+      return "Pendiente";
+    case "pagada":
+      return "Pagada";
+    case "vencida":
+      return "Vencida";
+    case "cancelada":
+      return "Cancelada";
+    default:
+      return String(status || "");
+  }
 };
 
-function ClientBillingHeader({
-  onBack,
-}: {
-  onBack: () => void;
-}) {
-  const [isScrolled, setIsScrolled] = useState(false);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      setIsScrolled(window.scrollY > 10);
-    };
-
-    window.addEventListener("scroll", handleScroll);
-
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
-
-  return (
-    <header
-      className={`fixed top-0 left-0 w-full h-[80px] z-50 transition-all duration-300 ${
-        isScrolled
-          ? "bg-white/95 backdrop-blur-md shadow-lg border-b border-[#102A66]/10"
-          : "bg-gradient-to-r from-[#102A66] to-[#173B8F] shadow-lg"
-      }`}
-    >
-      <nav className="container mx-auto h-[80px] pl-10 pr-4 flex items-center justify-between">
-        {/* Logo + nombre de la sección */}
-        <div className="flex items-center gap-3 h-full">
-          <img
-            src={
-              isScrolled
-                ? "/Images/logo-modira-azul.png"
-                : "/Images/logo-modira-blanco.png"
-            }
-            alt="Modira"
-            className="h-8 w-auto object-contain transition-all duration-300"
-          />
-
-          <span
-            className={`modira-font text-xl leading-none flex items-center translate-y-[2px] transition-colors duration-300 ${
-              isScrolled ? "text-[#102A66]" : "text-white"
-            }`}
-          >
-            Facturas
-          </span>
-        </div>
-
-        {/* Descripción */}
-        <div className="hidden md:flex flex-1 justify-center items-center px-8">
-          <span
-            className={`text-[14px] font-bold italic text-center transition-colors duration-300 ${
-              isScrolled ? "text-[#102A66]/80" : "text-white/80"
-            }`}
-          >
-            Consulta tus facturas y descarga sus documentos.
-          </span>
-        </div>
-
-        {/* Volver */}
-        <Button
-          onClick={onBack}
-          className={`text-[14px] font-semibold flex gap-2 items-center shadow-md transition-all duration-300 shrink-0 ${
-            isScrolled
-              ? "bg-[#102A66] text-white hover:bg-[#173B8F]"
-              : "bg-white text-[#102A66] hover:bg-white/90"
-          }`}
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Volver al Área de Clientes
-        </Button>
-      </nav>
-    </header>
-  );
+interface ParsedInvoiceDescription {
+  title: string | null;
+  detail: string | null;
+  services: Array<{
+    description: string;
+    quantity: string | null;
+    price: string | null;
+  }>;
 }
 
-export default function ClientBilling() {
-  const { user, loading: authLoading } = useAuth();
-  const [, setLocation] = useLocation();
+const parseInvoiceDescription = (
+  value?: string | null,
+): ParsedInvoiceDescription => {
+  const raw = value?.trim() || "";
 
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [companies, setCompanies] = useState<CompanyInfo[]>([]);
+  if (!raw) {
+    return { title: null, detail: null, services: [] };
+  }
 
+  const titleMatch = raw.match(
+    /Título:\s*(.*?)(?=\s*Descripción detallada:|\s*Servicios incluidos:|$)/is,
+  );
+
+  const detailMatch = raw.match(
+    /Descripción detallada:\s*(.*?)(?=\s*Servicios incluidos:|$)/is,
+  );
+
+  const servicesMatch = raw.match(/Servicios incluidos:\s*(.*)$/is);
+
+  const services: ParsedInvoiceDescription["services"] = [];
+
+  if (servicesMatch?.[1]) {
+    const chunks = servicesMatch[1]
+      .trim()
+      .split(/\s+-\s+(?=[^|\n]+\s*\|\s*Cantidad:)/i)
+      .map((item) => item.replace(/^[-•]\s*/, "").trim())
+      .filter(Boolean);
+
+    for (const chunk of chunks) {
+      const serviceMatch = chunk.match(
+        /^(.*?)\s*\|\s*Cantidad:\s*([^|]+?)\s*\|\s*Precio:\s*(.+)$/is,
+      );
+
+      if (serviceMatch) {
+        services.push({
+          description: serviceMatch[1].trim(),
+          quantity: serviceMatch[2].trim(),
+          price: serviceMatch[3].trim(),
+        });
+      } else {
+        services.push({
+          description: chunk,
+          quantity: null,
+          price: null,
+        });
+      }
+    }
+  }
+
+  return {
+    title: titleMatch?.[1]?.trim() || null,
+    detail: detailMatch?.[1]?.trim() || null,
+    services,
+  };
+};
+
+
+
+const getInvoiceTypeLabel = (invoice: Invoice) =>
+  invoice.rectifies_invoice_id ? "Factura rectificativa" : "Factura";
+
+const statusClasses = (status: string) => {
+  switch (normalize(status)) {
+    case "pagada":
+      return "bg-[#ECF8F1] text-[#247A49] border-[#CDE8D8]";
+    case "vencida":
+      return "bg-[#FFF6E7] text-[#A56A00] border-[#F0DEB7]";
+    case "cancelada":
+      return "bg-[#F4F6F8] text-[#667386] border-[#E0E5EA]";
+    default:
+      return "bg-[#F3F0F6] text-[#4B3E57] border-[#DDD7E5]";
+  }
+};
+
+const statusDot = (status: string) => {
+  switch (normalize(status)) {
+    case "pagada":
+      return "bg-[#247A49]";
+    case "vencida":
+      return "bg-[#A56A00]";
+    case "cancelada":
+      return "bg-[#98A2B3]";
+    default:
+      return "bg-[#4B3E57]";
+  }
+};
+
+const SectionTitle = ({
+  eyebrow,
+  title,
+  action,
+}: {
+  eyebrow?: string;
+  title: string;
+  action?: ReactNode;
+}) => (
+  <div className="mb-5 flex items-end justify-between gap-4">
+    <div className="min-w-0">
+      {eyebrow && (
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#7C8797]">
+          {eyebrow}
+        </p>
+      )}
+      <h2 className="text-xl font-semibold tracking-tight text-[#182A45] sm:text-2xl">
+        {title}
+      </h2>
+    </div>
+    {action && <div className="shrink-0">{action}</div>}
+  </div>
+);
+
+const ClientAreaSidebar = ({
+  isOpen,
+  onToggle,
+  location,
+  onNavigate,
+  onLogout,
+}: {
+  isOpen: boolean;
+  onToggle: () => void;
+  location: string;
+  onNavigate: (path: string) => void;
+  onLogout: () => void;
+}) => {
+  const navigationItems = [
+    { label: "Inicio", path: "/area-cliente", icon: Home },
+    { label: "Mi perfil", path: "#perfil", icon: UserRound },
+    {
+      label: "Mis proyectos",
+      path: "/area-cliente/proyectos",
+      icon: BriefcaseBusiness,
+    },
+    {
+      label: "Mantenimiento",
+      path: "/area-cliente/mantenimiento",
+      icon: Wrench,
+    },
+    {
+      label: "Presupuestos",
+      path: "/area-cliente/presupuestos",
+      icon: FileText,
+    },
+    {
+      label: "Facturación",
+      path: "/area-cliente/facturacion",
+      icon: Receipt,
+    },
+    {
+      label: "Documentos",
+      path: "/area-cliente/documentos",
+      icon: FileText,
+    },
+    {
+      label: "Soporte técnico",
+      path: "/area-cliente/soporte",
+      icon: Wrench,
+    },
+    { label: "Ayuda", path: "#ayuda", icon: CircleHelp },
+  ];
+
+  const isActive = (path: string) => {
+    if (path.startsWith("#")) return false;
+    if (path === "/area-cliente") return location === "/area-cliente";
+    return location.startsWith(path);
+  };
+
+  return (
+    <>
+      {isOpen && (
+        <button
+          type="button"
+          aria-label="Cerrar menú"
+          onClick={onToggle}
+          className="fixed inset-0 z-40 bg-[#102A66]/5 lg:hidden"
+        />
+      )}
+
+      <aside
+        className={[
+          "fixed left-0 top-0 z-50 flex h-screen flex-col border-r border-[#E3E8EE] bg-white transition-[width] duration-200 ease-out",
+          isOpen ? "w-[236px]" : "w-[62px]",
+        ].join(" ")}
+      >
+        <div className="flex h-[72px] shrink-0 items-center border-b border-[#E8ECF2] px-3">
+          {isOpen ? (
+            <>
+              <div className="flex min-w-0 flex-1 items-center px-2">
+                <span className="modira-font text-lg tracking-wide text-[#26344A]">
+                  MODIRA
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={onToggle}
+                aria-label="Cerrar menú"
+                title="Cerrar menú"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#718096] transition-colors hover:bg-[#F2F5F9] hover:text-[#173B8F]"
+              >
+                <X className="h-4 w-4" strokeWidth={1.8} />
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-label="Abrir menú"
+              title="Abrir menú"
+              className="flex h-8 w-full items-center justify-center rounded-md text-[#718096] transition-colors hover:bg-[#F2F5F9] hover:text-[#173B8F]"
+            >
+              <Menu className="h-5 w-5" strokeWidth={1.8} />
+            </button>
+          )}
+        </div>
+
+        <nav className="flex-1 overflow-y-auto px-2 py-4">
+          <div className="space-y-1">
+            {navigationItems.map((item) => {
+              const Icon = item.icon;
+              const active = isActive(item.path);
+
+              return (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => onNavigate(item.path)}
+                  title={!isOpen ? item.label : undefined}
+                  className={[
+                    "group flex w-full items-center rounded-md text-left transition-colors duration-150",
+                    isOpen
+                      ? "gap-3 px-3 py-2.5"
+                      : "justify-center px-2 py-2.5",
+                    active
+                      ? "bg-[#173B8F] text-white"
+                      : "text-[#647187] hover:bg-[#F3F5F8] hover:text-[#173B8F]",
+                  ].join(" ")}
+                >
+                  <Icon
+                    className="h-[17px] w-[17px] shrink-0"
+                    strokeWidth={1.75}
+                  />
+
+                  {isOpen && (
+                    <span className="truncate text-[12px] font-medium">
+                      {item.label}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+
+        <div className="shrink-0 border-t border-[#E8ECF2] p-2">
+          <button
+            type="button"
+            onClick={onLogout}
+            title={!isOpen ? "Cerrar sesión" : undefined}
+            className={[
+              "flex w-full items-center rounded-md text-[#718096] transition-colors duration-150 hover:bg-[#F3F5F8] hover:text-[#173B8F]",
+              isOpen
+                ? "gap-3 px-3 py-2.5"
+                : "justify-center px-2 py-2.5",
+            ].join(" ")}
+          >
+            <LogOut
+              className="h-[17px] w-[17px] shrink-0"
+              strokeWidth={1.75}
+            />
+            {isOpen && (
+              <span className="text-[12px] font-medium">Cerrar sesión</span>
+            )}
+          </button>
+        </div>
+      </aside>
+    </>
+  );
+};
+
+export default function Billing() {
+  const { user, signOut, loading: authLoading } = useAuth();
+  const [location, setLocation] = useLocation();
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectOwners, setProjectOwners] = useState<ProjectOwnerProfile[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("todos");
+  const [statusFilter, setStatusFilter] =
+    useState<BillingFilter>("all");
 
-  const [selectedInvoice, setSelectedInvoice] =
-    useState<Invoice | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedDocument, setSelectedDocument] =
+    useState<BillingDocument | null>(null);
 
-  const [openingPdf, setOpeningPdf] =
-    useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+const [pdfOpened, setPdfOpened] = useState(false);
+  const isDetailMode = Boolean(selectedKey);
 
-  const [payingInvoice, setPayingInvoice] =
-    useState<string | null>(null);
-useEffect(() => {
-  const handlePageShow = () => {
-    setPayingInvoice(null);
-  };
+  const navigate = useCallback(
+    (path: string) => {
+      if (path.startsWith("#")) {
+        if (location === "/area-cliente") {
+          document.querySelector(path)?.scrollIntoView({ behavior: "smooth" });
+        } else {
+          setLocation(`/area-cliente${path}`);
+        }
+      } else {
+        setLocation(path);
+      }
 
-  window.addEventListener("pageshow", handlePageShow);
+      setSidebarOpen(false);
+    },
+    [location, setLocation],
+  );
 
-  return () => {
-    window.removeEventListener("pageshow", handlePageShow);
-  };
-}, []);
+  const handleLogout = async () => {
+    const result = await signOut();
 
-  const loadBillingData = async () => {
-    if (!user) {
-      setLoading(false);
-      return;
+    if (result.success) {
+      setLocation("/");
     }
+  };
+
+  const getDocumentKey = (document: BillingDocument) =>
+    `${document.kind}:${document.data.id}`;
+
+  const openDocument = useCallback((document: BillingDocument) => {
+    const key = `${document.kind}:${document.data.id}`;
+
+    window.history.pushState(
+      {
+        modiraBillingView: true,
+        view: "billing-document",
+        documentKey: key,
+      },
+      "",
+      `${window.location.pathname}#invoice=${encodeURIComponent(key)}`,
+    );
+
+    setSelectedKey(key);
+setSelectedDocument(document);
+setPdfOpened(false);
+window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  const closeDocument = useCallback(() => {
+    window.history.replaceState(
+      { modiraBillingView: false, view: "billing-list" },
+      "",
+      window.location.pathname,
+    );
+
+    setSelectedKey(null);
+    setSelectedDocument(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  useEffect(() => {
+    const syncView = () => {
+      const hash = window.location.hash;
+
+      if (!hash.startsWith("#invoice=")) {
+        setSelectedKey(null);
+        setSelectedDocument(null);
+        return;
+      }
+
+      const key = decodeURIComponent(hash.slice("#invoice=".length));
+      setSelectedKey(key);
+    };
+
+    syncView();
+
+    window.addEventListener("popstate", syncView);
+    window.addEventListener("hashchange", syncView);
+
+    return () => {
+      window.removeEventListener("popstate", syncView);
+      window.removeEventListener("hashchange", syncView);
+    };
+  }, []);
+
+  const loadBilling = useCallback(async () => {
+    if (!user) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      // ============================================================
-      // 1. FACTURAS DEL CLIENTE
-      // ============================================================
+      const invoiceResult = await supabase
+        .from("invoices")
+        .select(
+          [
+            "id",
+            "project_id",
+            "company_id",
+            "user_id",
+            "numero_factura",
+            "fecha_emision",
+            "fecha_vencimiento",
+            "fecha_pago",
+            "descripcion",
+            "subtotal",
+            "iva_aplicado",
+            "iva_porcentaje",
+            "iva_importe",
+            "irpf_aplicado",
+            "irpf_porcentaje",
+            "irpf_importe",
+            "monto",
+            "importe_a_pagar",
+            "estado",
+            "document_path",
+            "rectifies_invoice_id",
+            "rectification_reason",
+            "created_at",
+            "updated_at",
+          ].join(","),
+        )
+        .order("fecha_emision", { ascending: false });
 
-      const { data: invoiceData, error: invoiceError } =
-        await supabase
-          .from("invoices")
-          .select(
-            `
-              id,
-              user_id,
-              company_id,
-              project_id,
-              numero_factura,
-              monto,
-              estado,
-              fecha_emision,
-              fecha_vencimiento,
-              descripcion,
-              subtotal,
-              iva_porcentaje,
-              iva_importe,
-              document_path
-            `
-          )
-          .eq("user_id", user.id)
-          .order("fecha_emision", {
-            ascending: false,
-          });
+      if (invoiceResult.error) throw invoiceResult.error;
 
-      if (invoiceError) {
-        throw invoiceError;
-      }
+      const invoiceRows =
+        (invoiceResult.data ?? []) as unknown as Invoice[];
 
-      const loadedInvoices = (invoiceData || []) as Invoice[];
-
-      setInvoices(loadedInvoices);
-
-      // ============================================================
-      // 2. PROYECTOS
-      // ============================================================
-
+      setInvoices(invoiceRows);
       const projectIds = Array.from(
         new Set(
-          loadedInvoices
+          invoiceRows
             .map((invoice) => invoice.project_id)
-            .filter(Boolean) as string[]
-        )
+            .filter((id): id is string => Boolean(id)),
+        ),
       );
 
       if (projectIds.length > 0) {
-        const {
-          data: projectData,
-          error: projectError,
-        } = await supabase
-          .from("projects")
-          .select("id, nombre, company_id")
-          .in("id", projectIds);
+        const { data: projectData, error: projectError } =
+          await supabase
+            .from("projects")
+            .select("id,nombre,user_id")
+            .in("id", projectIds);
 
-        if (!projectError) {
-          setProjects((projectData || []) as ProjectInfo[]);
+        if (projectError) throw projectError;
+
+        const loadedProjects = (projectData ?? []) as unknown as Project[];
+        setProjects(loadedProjects);
+
+        const ownerIds = Array.from(
+          new Set(
+            loadedProjects
+              .map((project) => project.user_id)
+              .filter((id): id is string => Boolean(id)),
+          ),
+        );
+
+        if (ownerIds.length > 0) {
+         const { data: ownerData, error: ownerError } = await supabase.rpc(
+  "get_company_profile_names",
+  {
+    p_user_ids: ownerIds,
+  },
+);
+
+if (ownerError) throw ownerError;
+setProjectOwners((ownerData || []) as ProjectOwnerProfile[]);
         } else {
-          console.warn(
-            "[ClientBilling] No se pudieron cargar los proyectos:",
-            projectError
-          );
-
-          setProjects([]);
+          setProjectOwners([]);
         }
       } else {
         setProjects([]);
+        setProjectOwners([]);
       }
 
-      // ============================================================
-      // 3. EMPRESAS
-      // ============================================================
+      const invoiceIds = invoiceRows.map((invoice) => invoice.id);
 
-      const companyIds = Array.from(
-        new Set(
-          loadedInvoices
-            .map((invoice) => invoice.company_id)
-            .filter(Boolean) as string[]
-        )
-      );
+      if (invoiceIds.length) {
+        const { data: paymentData, error: paymentError } =
+          await supabase
+            .from("payments")
+            .select(
+              [
+                "id",
+                "invoice_id",
+                "amount",
+                "currency",
+                "status",
+                "description",
+                "paid_at",
+                "stripe_checkout_session_id",
+                "stripe_payment_intent_id",
+                "created_at",
+              ].join(","),
+            )
+            .in("invoice_id", invoiceIds)
+            .order("created_at", { ascending: false });
 
-      if (companyIds.length > 0) {
-        const {
-          data: companyData,
-          error: companyError,
-        } = await supabase
-          .from("companies")
-          .select("id, company_name")
-          .in("id", companyIds);
+        if (paymentError) throw paymentError;
 
-        if (!companyError) {
-          setCompanies((companyData || []) as CompanyInfo[]);
-        } else {
-          console.warn(
-            "[ClientBilling] No se pudieron cargar las empresas:",
-            companyError
-          );
-
-          setCompanies([]);
-        }
+        setPayments((paymentData ?? []) as unknown as Payment[]);
       } else {
-        setCompanies([]);
+        setPayments([]);
       }
-    } catch (err: any) {
-      console.error(
-        "[ClientBilling] Error:",
-        err
-      );
+    } catch (loadError) {
+      console.error(loadError);
 
       setError(
-        err?.message ||
-          "No se ha podido cargar la información de facturación."
+        loadError instanceof Error
+          ? loadError.message
+          : "No se pudo cargar la información de facturación.",
       );
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    loadBillingData();
   }, [user]);
 
-  // ============================================================
-  // FILTROS
-  // ============================================================
+  useEffect(() => {
+    if (!user || authLoading) return;
+    void loadBilling();
+  }, [user, authLoading, loadBilling]);
 
-  const filteredInvoices = useMemo(() => {
-    const query = search.trim().toLowerCase();
+  const allDocuments = useMemo<BillingDocument[]>(
+    () => invoices.map((data) => ({ kind: "invoice" as const, data })),
+    [invoices],
+  );
 
-    return invoices.filter((invoice) => {
-      const projectName =
-        projects.find(
-          (project) =>
-            project.id === invoice.project_id
-        )?.nombre || "";
+  useEffect(() => {
+    if (!selectedKey) return;
 
-      const companyName =
-        companies.find(
-          (company) =>
-            company.id === invoice.company_id
-        )?.company_name || "";
-
-      const matchesSearch =
-        !query ||
-        invoice.numero_factura
-          .toLowerCase()
-          .includes(query) ||
-        projectName
-          .toLowerCase()
-          .includes(query) ||
-        companyName
-          .toLowerCase()
-          .includes(query) ||
-        (invoice.descripcion || "")
-          .toLowerCase()
-          .includes(query);
-
-      const normalized = normalizeStatus(
-        invoice.estado
-      );
-
-      const matchesStatus =
-        statusFilter === "todos" ||
-        normalized === statusFilter;
-
-      return (
-        matchesSearch &&
-        matchesStatus
-      );
-    });
-  }, [
-    invoices,
-    projects,
-    companies,
-    search,
-    statusFilter,
-  ]);
-
-  // ============================================================
-  // ESTADO GENERAL
-  // ============================================================
-
-  const billingStatus = useMemo(() => {
-    const pending = invoices.some(
-      (invoice) =>
-        normalizeStatus(invoice.estado) ===
-          "pendiente" ||
-        normalizeStatus(invoice.estado) ===
-          "vencida"
+    const current = allDocuments.find(
+      (document) => getDocumentKey(document) === selectedKey,
     );
 
-    if (invoices.length === 0) {
-      return "sin_facturas";
+    if (current) {
+      setSelectedDocument(current);
     }
+  }, [allDocuments, selectedKey]);
 
-    return pending
-      ? "pendiente"
-      : "al_dia";
+  const projectById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project])),
+    [projects],
+  );
+
+  const projectOwnerById = useMemo(
+    () => new Map(projectOwners.map((owner) => [owner.id, owner])),
+    [projectOwners],
+  );
+
+  const isProjectOwner = (projectId: string | null) =>
+    Boolean(projectId && user?.id && projectById.get(projectId)?.user_id === user.id);
+
+  const projectOwnerLabel = (projectId: string | null) => {
+    const ownerId = projectId ? projectById.get(projectId)?.user_id : null;
+
+    if (!ownerId) return "Sin responsable asignado";
+    if (ownerId === user?.id) return "Tú";
+
+    return projectOwnerById.get(ownerId)?.nombre?.trim() || "Responsable del proyecto";
+  };
+
+  const paymentByInvoiceId = useMemo(() => {
+    const map = new Map<string, Payment[]>();
+
+    payments.forEach((payment) => {
+      const key = payment.invoice_id;
+
+      if (!key) return;
+
+      const current = map.get(key) || [];
+      current.push(payment);
+      map.set(key, current);
+    });
+
+    return map;
+  }, [payments]);
+
+  const billingStats = useMemo(() => {
+    const documents = invoices;
+
+    return {
+      total: documents.length,
+      pending: documents.filter(
+        (invoice) => normalize(invoice.estado) === "pendiente",
+      ).length,
+      paid: documents.filter(
+        (invoice) => normalize(invoice.estado) === "pagada",
+      ).length,
+      overdue: documents.filter((invoice) => {
+        const status = normalize(invoice.estado);
+        return status === "vencida" || status === "impagada";
+      }).length,
+    };
   }, [invoices]);
 
-  const paidCount = useMemo(
-    () =>
-      invoices.filter(
-        (invoice) =>
-          normalizeStatus(invoice.estado) ===
-          "pagada"
-      ).length,
-    [invoices]
-  );
+  const totalBillingDocuments = billingStats.total;
 
-  const pendingCount = useMemo(
-    () =>
-      invoices.filter(
-        (invoice) => {
-          const status =
-            normalizeStatus(invoice.estado);
+  const filteredDocuments = useMemo(() => {
+    const normalizedSearch = normalize(search);
 
-          return (
-            status === "pendiente" ||
-            status === "vencida"
-          );
+    return allDocuments
+      .filter((document) => {
+        const status = normalize(document.data.estado);
+
+        if (
+          statusFilter !== "all" &&
+          status !== normalize(statusFilter)
+        ) {
+          return false;
         }
-      ).length,
-    [invoices]
-  );
 
-  // ============================================================
-  // HELPERS
-  // ============================================================
+        if (!normalizedSearch) return true;
 
-  const getProjectName = (
-    invoice: Invoice
-  ) =>
-    projects.find(
-      (project) =>
-        project.id === invoice.project_id
-    )?.nombre || "Sin proyecto";
+        const searchValues = [
+          document.data.numero_factura,
+          document.data.descripcion,
+          document.data.project_id
+            ? projectById.get(document.data.project_id)?.nombre
+            : "",
+        ];
 
-  const getCompanyName = (
-    invoice: Invoice
-  ) =>
-    companies.find(
-      (company) =>
-        company.id === invoice.company_id
-    )?.company_name || "Sin empresa";
+        return searchValues
+          .map(normalize)
+          .some((value) => value.includes(normalizedSearch));
+      })
+      .sort((a, b) => {
+        const aDate = new Date(
+          a.data.fecha_emision || a.data.created_at,
+        ).getTime();
 
-  // ============================================================
-  // PAGAR FACTURA
-  // ============================================================
+        const bDate = new Date(
+          b.data.fecha_emision || b.data.created_at,
+        ).getTime();
 
-  const handlePayInvoice = async (
-    invoice: Invoice
-  ) => {
-    const status =
-      normalizeStatus(invoice.estado);
+        return bDate - aDate;
+      });
+  }, [allDocuments, projectById, search, statusFilter]);
 
-    // IMPORTANTE:
-    // Se permite pagar tanto PENDIENTE como VENCIDA.
+  const isOverdue = (document: BillingDocument) => {
+    const { data } = document;
+
     if (
-      status !== "pendiente" &&
-      status !== "vencida"
+      data.estado === "pagada" ||
+      data.estado === "cancelada"
     ) {
-      toast.info(
-        "Esta factura no está disponible para pago."
-      );
-
-      return;
+      return false;
     }
 
-    setPayingInvoice(invoice.id);
+    if (!data.fecha_vencimiento) return false;
 
-    try {
-      const {
-        data: sessionData,
-        error: sessionError,
-      } =
-        await supabase.functions.invoke(
-          "create-checkout-session",
-          {
-            body: {
-              invoice_id: invoice.id,
-            },
-          }
-        );
-
-      if (sessionError) {
-        throw sessionError;
-      }
-
-      if (
-        !sessionData ||
-        !sessionData.checkout_url
-      ) {
-        throw new Error(
-          "No se ha podido generar el enlace de pago."
-        );
-      }
-
-      // Stripe se encarga del pago.
-      // La factura NO se marca como pagada aquí.
-      window.location.href =
-        sessionData.checkout_url;
-    } catch (err: any) {
-      console.error(
-        "[ClientBilling] Error iniciando pago:",
-        err
-      );
-
-      toast.error(
-        err?.message ||
-          "No se ha podido iniciar el pago de la factura."
-      );
-
-      setPayingInvoice(null);
-    }
+    return new Date(data.fecha_vencimiento).getTime() < Date.now();
   };
 
-  // ============================================================
-  // ABRIR PDF
-  // ============================================================
+  const getDocumentNumber = (document: BillingDocument) =>
+    document.data.numero_factura;
 
-  const openInvoicePdf = async (
-    invoice: Invoice
+  const getDocumentAmount = (document: BillingDocument) =>
+    Number(document.data.importe_a_pagar ?? 0);
+
+  const getDocumentDescription = (document: BillingDocument) =>
+    document.data.descripcion || "Factura";
+
+  const getParsedDocumentDescription = (document: BillingDocument) =>
+    parseInvoiceDescription(document.data.descripcion);
+
+  const getDocumentTypeLabel = (document: BillingDocument) =>
+    document.data.rectifies_invoice_id
+      ? "Factura rectificativa"
+      : "Factura";
+
+  const getAvailablePdfPath = (document: BillingDocument) =>
+    document.data.document_path;
+
+  const getPdfBucket = () => "invoices";
+
+  const getSignedPdfUrl = async (
+    document: BillingDocument,
+    download = false,
   ) => {
-    if (!invoice.document_path) {
-      toast.info(
-        "Esta factura todavía no tiene un PDF disponible."
-      );
+    const path = getAvailablePdfPath(document);
 
-      return;
+    if (!path) {
+      toast.error("Esta factura no tiene un PDF disponible.");
+      return null;
     }
 
-    setOpeningPdf(invoice.id);
-
-    try {
-      const {
-        data,
-        error: signedUrlError,
-      } = await supabase.storage
-        .from("invoices")
-        .createSignedUrl(
-          invoice.document_path,
-          300
-        );
-
-      if (signedUrlError) {
-        throw signedUrlError;
-      }
-
-      if (!data?.signedUrl) {
-        throw new Error(
-          "No se pudo generar el enlace seguro del PDF."
-        );
-      }
-
-      window.open(
-        data.signedUrl,
-        "_blank",
-        "noopener,noreferrer"
-      );
-    } catch (err: any) {
-      console.error(
-        "[ClientBilling] Error abriendo PDF:",
-        err
+    const { data, error: storageError } = await supabase.storage
+      .from(getPdfBucket())
+      .createSignedUrl(
+        path,
+        60 * 10,
+        download ? { download: true } : undefined,
       );
 
-      toast.error(
-        err?.message ||
-          "No se ha podido abrir el PDF de la factura."
-      );
-    } finally {
-      setOpeningPdf(null);
+    if (storageError) {
+      console.error(storageError);
+      toast.error("No se pudo acceder al PDF de la factura.");
+      return null;
+    }
+
+    if (!data?.signedUrl) {
+      toast.error("No se pudo generar el enlace del PDF.");
+      return null;
+    }
+
+    return data.signedUrl;
+  };
+
+  const handleViewPdf = async (document: BillingDocument) => {
+  const pdfWindow = window.open("", "_blank");
+
+  if (!pdfWindow) {
+    toast.error("El navegador ha bloqueado la apertura del PDF.");
+    return false;
+  }
+
+  const url = await getSignedPdfUrl(document);
+
+  if (!url) {
+    pdfWindow.close();
+    return false;
+  }
+
+  pdfWindow.location.href = url;
+
+  return true;
+};
+
+  const handleDownloadPdf = async (document: BillingDocument) => {
+    const url = await getSignedPdfUrl(document, true);
+
+    if (url) {
+      window.location.assign(url);
     }
   };
 
-  // ============================================================
-  // DESCARGAR PDF
-  // ============================================================
-
-  const downloadInvoicePdf = async (
-    invoice: Invoice
-  ) => {
-    if (!invoice.document_path) {
-      toast.info(
-        "Esta factura todavía no tiene un PDF disponible."
-      );
-
-      return;
-    }
-
-    setOpeningPdf(invoice.id);
-
-    try {
-      const {
-        data,
-        error: signedUrlError,
-      } =
-        await supabase.storage
-          .from("invoices")
-          .createSignedUrl(
-            invoice.document_path,
-            300,
-            {
-              download: `${invoice.numero_factura}.pdf`,
-            }
-          );
-
-      if (signedUrlError) {
-        throw signedUrlError;
-      }
-
-      if (!data?.signedUrl) {
-        throw new Error(
-          "No se pudo generar el enlace seguro del PDF."
-        );
-      }
-
-      const response = await fetch(
-        data.signedUrl
-      );
-
-      if (!response.ok) {
-        throw new Error(
-          "No se pudo descargar el PDF."
-        );
-      }
-
-      const blob =
-        await response.blob();
-
-      const url =
-        URL.createObjectURL(blob);
-
-      const anchor =
-        document.createElement("a");
-
-      anchor.href = url;
-      anchor.download =
-        `${invoice.numero_factura}.pdf`;
-
-      document.body.appendChild(anchor);
-
-      anchor.click();
-
-      anchor.remove();
-
-      URL.revokeObjectURL(url);
-    } catch (err: any) {
-      console.error(
-        "[ClientBilling] Error descargando PDF:",
-        err
-      );
-
-      toast.error(
-        err?.message ||
-          "No se ha podido descargar el PDF de la factura."
-      );
-    } finally {
-      setOpeningPdf(null);
-    }
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadBilling();
+    setRefreshing(false);
   };
 
-  // ============================================================
-  // LOADING
-  // ============================================================
+  const selectedPayments = selectedDocument
+    ? paymentByInvoiceId.get(selectedDocument.data.id) || []
+    : [];
 
   if (authLoading || loading) {
     return (
-      <div className="min-h-screen bg-white">
-        <ClientBillingHeader
-          onBack={() =>
-            setLocation("/area-cliente")
-          }
+      <div className="min-h-screen bg-[#FBFCFE]">
+        <ClientAreaSidebar
+          isOpen={sidebarOpen}
+          onToggle={() => setSidebarOpen((value) => !value)}
+          location={location}
+          onNavigate={navigate}
+          onLogout={handleLogout}
         />
 
-        <div className="flex min-h-[60vh] items-center justify-center">
-          <div className="text-center">
-            <Loader2 className="mx-auto mb-4 h-10 w-10 animate-spin text-[#173B8F]" />
+        <main className={sidebarOpen ? "ml-[62px] min-h-screen lg:ml-[236px]" : "ml-[62px] min-h-screen"}>
+          <ClientFloatingActions />
 
-            <p className="text-[#52627A]">
-              Cargando tu información de facturación...
-            </p>
+          <div className="mx-auto flex min-h-screen max-w-[1380px] items-center justify-center px-5 sm:px-8 lg:px-12">
+            <div className="text-center">
+              <Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-[#173B8F]" />
+              <p className="text-[12px] text-[#718096]">
+                Cargando facturación...
+              </p>
+            </div>
           </div>
-        </div>
+        </main>
       </div>
     );
   }
 
-  if (!user) {
-    return null;
+  if (isDetailMode) {
+    return (
+      <div className="min-h-screen bg-[#FBFCFE] text-[#26344A]">
+        <ClientAreaSidebar
+          isOpen={sidebarOpen}
+          onToggle={() => setSidebarOpen((value) => !value)}
+          location={location}
+          onNavigate={navigate}
+          onLogout={handleLogout}
+        />
+
+        <main className={sidebarOpen ? "ml-[62px] min-h-screen lg:ml-[236px]" : "ml-[62px] min-h-screen"}>
+          <ClientFloatingActions />
+
+          <div className="mx-auto max-w-[1380px] px-5 pb-20 pt-10 sm:px-8 lg:px-12">
+            <section className="mb-8 border-b border-[#E6EAF0] pb-8">
+              <button
+                type="button"
+                onClick={closeDocument}
+                className="mb-5 inline-flex items-center gap-1.5 text-[11px] font-medium text-[#718096] transition-colors hover:text-[#173B8F]"
+              >
+                <ArrowRight className="h-3.5 w-3.5 rotate-180" />
+                Volver a facturación
+              </button>
+
+              {selectedDocument ? (
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#7C8797]">
+                      Área de Cliente
+                    </p>
+                    <h1 className="text-2xl font-semibold tracking-tight text-[#182A45] sm:text-3xl">
+                      {getDocumentNumber(selectedDocument)}
+                    </h1>
+                   
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-[#E0E5EA] bg-white px-3 py-1.5 text-[10px] font-semibold text-[#667386]">
+                      {getDocumentTypeLabel(selectedDocument)}
+                    </span>
+
+                    <span
+                      className={[
+                        "inline-flex rounded-full border px-3 py-1.5 text-[10px] font-semibold",
+                        statusClasses(selectedDocument.data.estado),
+                      ].join(" ")}
+                    >
+                      <span
+                        className={[
+                          "mr-2 mt-[3px] h-1.5 w-1.5 rounded-full",
+                          statusDot(selectedDocument.data.estado),
+                        ].join(" ")}
+                      />
+                      {displayStatus(selectedDocument.data.estado)}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="py-6">
+                  <Loader2 className="h-6 w-6 animate-spin text-[#173B8F]" />
+                </div>
+              )}
+            </section>
+
+            {error && !selectedDocument ? (
+              <ErrorBlock message={error} />
+            ) : selectedDocument ? (
+              <BillingDetail
+  document={selectedDocument}
+  pdfOpened={pdfOpened}
+  setPdfOpened={setPdfOpened}
+  projectName={
+    selectedDocument.kind === "invoice" &&
+    selectedDocument.data.project_id
+      ? projectById.get(
+          selectedDocument.data.project_id,
+        )?.nombre
+      : undefined
+  }
+  projectOwnerLabel={
+    selectedDocument.kind === "invoice"
+      ? projectOwnerLabel(selectedDocument.data.project_id)
+      : "Sin responsable asignado"
+  }
+  isProjectOwner={
+    selectedDocument.kind === "invoice"
+      ? isProjectOwner(selectedDocument.data.project_id)
+      : false
+  }
+  payments={selectedPayments}
+  onViewPdf={() => handleViewPdf(selectedDocument)}
+  onDownloadPdf={() =>
+    void handleDownloadPdf(selectedDocument)
+  }
+  hasPdf={Boolean(getAvailablePdfPath(selectedDocument))}
+  overdue={isOverdue(selectedDocument)}
+  originalInvoiceNumber={
+    invoices.find(
+      (invoice) => invoice.id === selectedDocument.data.rectifies_invoice_id,
+    )?.numero_factura
+  }
+/>
+            ) : (
+              <div className="border-y border-[#E7EBF0] py-14 text-center">
+                <Loader2 className="mx-auto h-7 w-7 animate-spin text-[#173B8F]" />
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-[#F5F7FA]">
-      <ClientBillingHeader
-        onBack={() =>
-          setLocation("/area-cliente")
-        }
+    <div className="min-h-screen bg-[#FBFCFE] text-[#26344A]">
+      <ClientAreaSidebar
+        isOpen={sidebarOpen}
+        onToggle={() => setSidebarOpen((value) => !value)}
+        location={location}
+        onNavigate={navigate}
+        onLogout={handleLogout}
       />
 
-      <main className="container mx-auto px-4 pt-[112px] pb-12">
-        {/* ERROR */}
-        {error && (
-          <Card className="mb-8 border-2 border-red-200 bg-red-50 p-5">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-600" />
+      <main className={sidebarOpen ? "ml-[62px] min-h-screen lg:ml-[236px]" : "ml-[62px] min-h-screen"}>
+        <ClientFloatingActions />
 
+        <div className="mx-auto max-w-[1380px] px-5 pb-20 pt-10 sm:px-8 lg:px-12">
+          <section className="mb-8 border-b border-[#E6EAF0] pb-8">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <p className="font-semibold text-red-800">
-                  No se ha podido cargar la facturación
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#7C8797]">
+                  Área de Cliente
                 </p>
-
-                <p className="mt-1 text-sm text-red-700">
-                  {error}
+                <h1 className="text-2xl font-semibold tracking-tight text-[#182A45] sm:text-3xl">
+                  Facturación
+                </h1>
+                <p className="mt-1.5 max-w-2xl text-sm text-[#718096]">
+                  Consulta tus facturas, importes, vencimientos, pagos y
+                  documentación asociada.
                 </p>
-              </div>
-            </div>
-          </Card>
-        )}
-
-        {/* ======================================================
-            ESTADO GENERAL
-        ====================================================== */}
-
-        <section className="mb-10">
-          <Card className="border border-[#E8ECF2] bg-white p-6 md:p-8">
-            <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-              <div className="flex items-start gap-4">
-                {billingStatus ===
-                  "al_dia" && (
-                  <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-green-100">
-                    <CheckCircle2 className="h-6 w-6 text-green-600" />
-                  </div>
-                )}
-
-                {billingStatus ===
-                  "pendiente" && (
-                  <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-amber-100">
-                    <AlertCircle className="h-6 w-6 text-amber-600" />
-                  </div>
-                )}
-
-                {billingStatus ===
-                  "sin_facturas" && (
-                  <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-gray-100">
-                    <FileText className="h-6 w-6 text-gray-500" />
-                  </div>
-                )}
-
-                <div>
-                  <p className="text-sm font-semibold uppercase tracking-wide text-[#52627A]">
-                    Estado de facturación
-                  </p>
-
-                  <h2 className="mt-1 text-2xl font-bold text-[#102A66]">
-                    {billingStatus ===
-                      "al_dia" &&
-                      "Estás al día con tus facturas"}
-
-                    {billingStatus ===
-                      "pendiente" &&
-                      "Tienes facturas pendientes"}
-
-                    {billingStatus ===
-                      "sin_facturas" &&
-                      "Todavía no tienes facturas"}
-                  </h2>
-
-                  <p className="mt-1 text-[#52627A]">
-                    {billingStatus ===
-                      "al_dia" &&
-                      "Todas tus facturas registradas están pagadas."}
-
-                    {billingStatus ===
-                      "pendiente" &&
-                      `Tienes ${pendingCount} ${
-                        pendingCount === 1
-                          ? "factura pendiente"
-                          : "facturas pendientes"
-                      }.`}
-
-                    {billingStatus ===
-                      "sin_facturas" &&
-                      "Cuando se emita una factura aparecerá aquí."}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-3">
-                <Badge
-                  variant="outline"
-                  className="border-green-200 bg-green-50 px-3 py-1.5 text-green-700"
-                >
-                  {paidCount} pagadas
-                </Badge>
-
-                {pendingCount > 0 && (
-                  <Badge
-                    variant="outline"
-                    className="border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-700"
-                  >
-                    {pendingCount} pendientes
-                  </Badge>
-                )}
-              </div>
-            </div>
-          </Card>
-        </section>
-
-        {/* ======================================================
-            FACTURAS
-        ====================================================== */}
-
-        <section>
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold text-[#102A66]">
-              Mis facturas
-            </h2>
-
-            <p className="mt-1 text-[#52627A]">
-              Consulta el detalle y descarga el PDF de cada factura disponible.
-            </p>
-          </div>
-
-          <Card className="overflow-hidden border border-[#E8ECF2] bg-white">
-            {/* BUSCADOR */}
-            <div className="border-b border-[#E8ECF2] p-5 md:p-6">
-              <div className="flex flex-col gap-3 md:flex-row">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8A98AB]" />
-
-                  <input
-                    value={search}
-                    onChange={(e) =>
-                      setSearch(e.target.value)
-                    }
-                    placeholder="Buscar por factura, proyecto o empresa..."
-                    className="h-11 w-full rounded-lg border border-[#DCE2EA] bg-white pl-10 pr-4 text-sm text-[#182230] outline-none transition focus:border-[#173B8F] focus:ring-2 focus:ring-[#173B8F]/10"
-                  />
-                </div>
-
-                <select
-                  value={statusFilter}
-                  onChange={(e) =>
-                    setStatusFilter(
-                      e.target.value
-                    )
-                  }
-                  className="h-11 rounded-lg border border-[#DCE2EA] bg-white px-4 text-sm text-[#182230] outline-none focus:border-[#173B8F]"
-                >
-                  <option value="todos">
-                    Todos los estados
-                  </option>
-
-                  <option value="pagada">
-                    Pagadas
-                  </option>
-
-                  <option value="pendiente">
-                    Pendientes
-                  </option>
-
-                  <option value="vencida">
-                    Vencidas
-                  </option>
-
-                  <option value="cancelada">
-                    Canceladas
-                  </option>
-                </select>
-              </div>
-            </div>
-
-            {/* TABLA */}
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1050px]">
-                {filteredInvoices.length >
-                  0 && (
-                  <thead className="bg-[#F8FAFC]">
-                    <tr className="border-b border-[#E8ECF2]">
-                      <th className="px-6 py-4 text-left text-sm font-bold text-[#182230]">
-                        Nº Factura
-                      </th>
-
-                      <th className="px-6 py-4 text-left text-sm font-bold text-[#182230]">
-                        Proyecto
-                      </th>
-
-                      <th className="px-6 py-4 text-left text-sm font-bold text-[#182230]">
-                        Fecha emisión
-                      </th>
-
-                      <th className="px-6 py-4 text-left text-sm font-bold text-[#182230]">
-                        Vencimiento
-                      </th>
-
-                      <th className="px-6 py-4 text-right text-sm font-bold text-[#182230]">
-                        Importe
-                      </th>
-
-                      <th className="px-6 py-4 text-center text-sm font-bold text-[#182230]">
-                        Estado
-                      </th>
-
-                      <th className="px-6 py-4 text-right text-sm font-bold text-[#182230]">
-                        Acciones
-                      </th>
-                    </tr>
-                  </thead>
-                )}
-
-                <tbody>
-                  {filteredInvoices.length ===
-                  0 ? (
-                    <tr>
-                      <td
-                        colSpan={7}
-                        className="px-6 py-16 text-center text-[#52627A]"
-                      >
-                        <FileText className="mx-auto mb-3 h-10 w-10 text-[#B7C0CD]" />
-
-                        <p className="font-semibold text-[#182230]">
-                          {invoices.length ===
-                          0
-                            ? "No tienes facturas registradas"
-                            : "No se han encontrado facturas"}
-                        </p>
-
-                        <p className="mt-1 text-sm">
-                          {invoices.length ===
-                          0
-                            ? "Las facturas emitidas para tu cuenta aparecerán aquí."
-                            : "Prueba a cambiar el filtro o la búsqueda."}
-                        </p>
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredInvoices.map(
-                      (invoice) => {
-                        const status =
-                          normalizeStatus(
-                            invoice.estado
-                          );
-
-                        const hasPdf =
-                          Boolean(
-                            invoice.document_path
-                          );
-
-                        const payable =
-                          canPayInvoice(
-                            invoice
-                          );
-
-                        return (
-                          <tr
-                            key={invoice.id}
-                            className="border-b border-[#EEF1F5] transition hover:bg-[#FAFBFD]"
-                          >
-                            <td className="px-6 py-5">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setSelectedInvoice(
-                                    invoice
-                                  )
-                                }
-                                className="font-mono text-sm font-semibold text-[#173B8F] hover:underline"
-                              >
-                                {
-                                  invoice.numero_factura
-                                }
-                              </button>
-                            </td>
-
-                            <td className="px-6 py-5">
-                              <div className="font-medium text-[#182230]">
-                                {getProjectName(
-                                  invoice
-                                )}
-                              </div>
-
-                              <div className="mt-1 text-xs text-[#7B8798]">
-                                {getCompanyName(
-                                  invoice
-                                )}
-                              </div>
-                            </td>
-
-                            <td className="px-6 py-5 text-sm text-[#52627A]">
-                              {formatDate(
-                                invoice.fecha_emision
-                              )}
-                            </td>
-
-                            <td className="px-6 py-5 text-sm text-[#52627A]">
-                              {formatDate(
-                                invoice.fecha_vencimiento
-                              )}
-                            </td>
-
-                            <td className="px-6 py-5 text-right font-semibold text-[#182230]">
-                              {currency.format(
-                                Number(
-                                  invoice.monto ||
-                                    0
-                                )
-                              )}
-                            </td>
-
-                            <td className="px-6 py-5 text-center">
-                              <Badge
-                                className={
-                                  status ===
-                                  "pagada"
-                                    ? "bg-green-100 text-green-800 hover:bg-green-100"
-                                    : status ===
-                                      "pendiente"
-                                    ? "bg-amber-100 text-amber-800 hover:bg-amber-100"
-                                    : status ===
-                                      "vencida"
-                                    ? "bg-red-100 text-red-800 hover:bg-red-100"
-                                    : status ===
-                                      "cancelada"
-                                    ? "bg-gray-100 text-gray-800 hover:bg-gray-100"
-                                    : "bg-gray-100 text-gray-800 hover:bg-gray-100"
-                                }
-                              >
-                                {statusLabel(
-                                  invoice.estado
-                                )}
-                              </Badge>
-                            </td>
-
-                            {/* ACCIONES */}
-                            <td className="px-6 py-5">
-                              <div className="flex justify-end gap-2">
-                                {/* VER */}
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() =>
-                                    setSelectedInvoice(
-                                      invoice
-                                    )
-                                  }
-                                  className="gap-2 border-[#DCE2EA] text-[#173B8F] hover:bg-[#F4F7FB]"
-                                >
-                                  <Eye className="h-4 w-4" />
-                                  Ver
-                                </Button>
-
-                                {/* PDF */}
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={
-                                    !hasPdf ||
-                                    openingPdf ===
-                                      invoice.id
-                                  }
-                                  onClick={() =>
-                                    downloadInvoicePdf(
-                                      invoice
-                                    )
-                                  }
-                                  className="gap-2 border-[#DCE2EA] text-[#173B8F] hover:bg-[#F4F7FB]"
-                                >
-                                  {openingPdf ===
-                                  invoice.id ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Download className="h-4 w-4" />
-                                  )}
-
-                                  PDF
-                                </Button>
-
-                                {/* PAGAR
-                                    Siempre al final.
-                                    Solo pendiente/vencida.
-                                */}
-                                {payable && (
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    disabled={
-                                      payingInvoice ===
-                                      invoice.id
-                                    }
-                                    onClick={() =>
-                                      handlePayInvoice(
-                                        invoice
-                                      )
-                                    }
-                                    className="gap-2 bg-[#173B8F] text-white hover:bg-[#102A66]"
-                                  >
-                                    {payingInvoice ===
-                                    invoice.id ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      <CreditCard className="h-4 w-4" />
-                                    )}
-
-                                    {payingInvoice ===
-                                    invoice.id
-                                      ? "Procesando..."
-                                      : "Pagar"}
-                                  </Button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      }
-                    )
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </section>
-      </main>
-
-      {/* ========================================================
-          MODAL DETALLE
-      ======================================================== */}
-
-      {selectedInvoice && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6"
-          onMouseDown={(event) => {
-            if (
-              event.target ===
-              event.currentTarget
-            ) {
-              setSelectedInvoice(null);
-            }
-          }}
-        >
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
-            {/* HEADER */}
-            <div className="flex items-start justify-between border-b border-[#E8ECF2] px-6 py-5">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-wide text-[#52627A]">
-                  Detalle de factura
-                </p>
-
-                <h3 className="mt-1 font-mono text-xl font-bold text-[#102A66]">
-                  {
-                    selectedInvoice.numero_factura
-                  }
-                </h3>
               </div>
 
               <button
                 type="button"
-                onClick={() =>
-                  setSelectedInvoice(null)
-                }
-                className="rounded-lg p-2 text-[#7B8798] hover:bg-[#F4F6F9] hover:text-[#182230]"
-                aria-label="Cerrar"
+                onClick={() => void handleRefresh()}
+                disabled={refreshing}
+                className="inline-flex items-center gap-2 rounded-full border border-[#DCE2E9] bg-white px-4 py-2 text-[11px] font-semibold text-[#667386] transition-colors hover:border-[#C6CFDA] hover:text-[#173B8F] disabled:opacity-50"
               >
-                <XCircle className="h-5 w-5" />
+                {refreshing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ArrowRight className="h-3.5 w-3.5 rotate-90" />
+                )}
+                Actualizar
               </button>
             </div>
+          </section>
 
-            {/* CONTENIDO */}
-            <div className="space-y-6 px-6 py-6">
-              <div className="grid gap-5 md:grid-cols-2">
-                <div>
-                  <p className="text-sm text-[#7B8798]">
-                    Proyecto
-                  </p>
+          <section className="mb-10 grid grid-cols-2 divide-x divide-y divide-[#E5E9EF] border-y border-[#E5E9EF] bg-white/40 lg:grid-cols-4 lg:divide-y-0">
+            {[
+              {
+                label: "Total de facturas",
+                value: billingStats.total,
+                detail:
+                  billingStats.total === 1
+                    ? "Factura registrada"
+                    : "Facturas registradas",
+                icon: Receipt,
+                active: billingStats.total > 0,
+              },
+              {
+                label: "Facturas pendientes",
+                value: billingStats.pending,
+                detail: "Pendientes de pago",
+                icon: Clock3,
+                active: billingStats.pending > 0,
+              },
+              {
+                label: "Facturas pagadas",
+                value: billingStats.paid,
+                detail: "Pagos confirmados",
+                icon: Check,
+                active: billingStats.paid > 0,
+              },
+              {
+                label: "Facturas vencidas",
+                value: billingStats.overdue,
+                detail: "Pendientes fuera de plazo",
+                icon: AlertCircle,
+                active: billingStats.overdue > 0,
+              },
+            ].map((item) => {
+              const Icon = item.icon;
 
-                  <p className="mt-1 font-semibold text-[#182230]">
-                    {getProjectName(
-                      selectedInvoice
-                    )}
-                  </p>
-                </div>
+              return (
+                <div
+                  key={item.label}
+                  className={[
+                    "min-h-[116px] px-5 py-5 sm:px-7",
+                    item.active
+                      ? "bg-[#173B8F] text-white"
+                      : "bg-white/50 text-[#1E2D43]",
+                  ].join(" ")}
+                >
+                  <div className="flex h-full items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p
+                        className={[
+                          "text-[10px] font-semibold uppercase tracking-[0.13em]",
+                          item.active
+                            ? "text-white/75"
+                            : "text-[#8A95A4]",
+                        ].join(" ")}
+                      >
+                        {item.label}
+                      </p>
 
-                <div>
-                  <p className="text-sm text-[#7B8798]">
-                    Empresa
-                  </p>
+                      <p
+                        className={[
+                          "mt-2 text-2xl font-semibold tracking-tight",
+                          item.active ? "text-white" : "text-[#1E2D43]",
+                        ].join(" ")}
+                      >
+                        {item.value}
+                      </p>
 
-                  <p className="mt-1 font-semibold text-[#182230]">
-                    {getCompanyName(
-                      selectedInvoice
-                    )}
-                  </p>
-                </div>
+                      <p
+                        className={[
+                          "mt-0.5 truncate text-xs",
+                          item.active
+                            ? "text-white/80"
+                            : "text-[#8A95A4]",
+                        ].join(" ")}
+                      >
+                        {item.detail}
+                      </p>
+                    </div>
 
-                <div>
-                  <p className="text-sm text-[#7B8798]">
-                    Fecha de emisión
-                  </p>
-
-                  <p className="mt-1 font-semibold text-[#182230]">
-                    {formatDate(
-                      selectedInvoice.fecha_emision
-                    )}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-sm text-[#7B8798]">
-                    Fecha de vencimiento
-                  </p>
-
-                  <p className="mt-1 font-semibold text-[#182230]">
-                    {formatDate(
-                      selectedInvoice.fecha_vencimiento
-                    )}
-                  </p>
-                </div>
-              </div>
-
-              {selectedInvoice.descripcion && (
-                <div className="rounded-xl bg-[#F7F9FC] p-4">
-                  <p className="text-sm font-semibold text-[#52627A]">
-                    Concepto
-                  </p>
-
-                  <p className="mt-1 text-[#182230]">
-                    {
-                      selectedInvoice.descripcion
-                    }
-                  </p>
-                </div>
-              )}
-
-              {/* IMPORTE */}
-              <div className="rounded-xl border border-[#E8ECF2] p-5">
-                <div className="flex items-center justify-between text-sm text-[#52627A]">
-                  <span>
-                    Base imponible
-                  </span>
-
-                  <span>
-                    {currency.format(
-                      Number(
-                        selectedInvoice.subtotal ||
-                          0
-                      )
-                    )}
-                  </span>
-                </div>
-
-                <div className="mt-3 flex items-center justify-between text-sm text-[#52627A]">
-                  <span>
-                    IVA (
-                    {Number(
-                      selectedInvoice.iva_porcentaje ||
-                        0
-                    )}
-                    %)
-                  </span>
-
-                  <span>
-                    {currency.format(
-                      Number(
-                        selectedInvoice.iva_importe ||
-                          0
-                      )
-                    )}
-                  </span>
-                </div>
-
-                <div className="mt-4 flex items-center justify-between border-t border-[#E8ECF2] pt-4">
-                  <span className="font-bold text-[#182230]">
-                    Total
-                  </span>
-
-                  <span className="text-2xl font-bold text-[#173B8F]">
-                    {currency.format(
-                      Number(
-                        selectedInvoice.monto ||
-                          0
-                      )
-                    )}
-                  </span>
-                </div>
-              </div>
-
-              {/* ESTADO */}
-              <div className="flex items-center justify-between rounded-xl bg-[#F7F9FC] p-4">
-                <div className="flex items-center gap-3">
-                  {normalizeStatus(
-                    selectedInvoice.estado
-                  ) === "pagada" ? (
-                    <CheckCircle2 className="h-5 w-5 text-green-600" />
-                  ) : (
-                    <AlertCircle className="h-5 w-5 text-amber-600" />
-                  )}
-
-                  <div>
-                    <p className="text-sm font-semibold text-[#182230]">
-                      {statusLabel(
-                        selectedInvoice.estado
-                      )}
-                    </p>
-
-                    <p className="text-xs text-[#7B8798]">
-                      Estado actual de la factura
-                    </p>
+                    <Icon
+                      className={[
+                        "mt-0.5 h-4 w-4 shrink-0",
+                        item.active
+                          ? "text-white/80"
+                          : "text-[#A1AAB7]",
+                      ].join(" ")}
+                      strokeWidth={1.7}
+                    />
                   </div>
                 </div>
+              );
+            })}
+          </section>
+
+          <section>
+            <SectionTitle
+              eyebrow="Cartera de facturación"
+              title="Todas tus facturas"
+              action={
+                <span className="text-[11px] text-[#8A95A5]">
+                  {filteredDocuments.length} de {totalBillingDocuments}
+                </span>
+              }
+            />
+
+            <div className="mb-8 border border-[#E3E8EE] bg-white p-4 sm:p-5">
+              <div className="flex h-11 items-center gap-3 rounded-lg border border-[#E3E8EE] bg-[#F8FAFC] px-3.5 transition-all focus-within:border-[#173B8F] focus-within:ring-1 focus-within:ring-[#173B8F]">
+                <Search
+                  className="h-4 w-4 shrink-0 text-[#8F9AAA]"
+                  strokeWidth={1.7}
+                />
+
+                <Input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Buscar factura por número, descripción o periodo..."
+                  className="h-full min-w-0 !border-0 !bg-transparent !p-0 text-[13px] text-[#344054] !shadow-none !outline-none placeholder:text-[#9AA4B2] focus:!border-0 focus:!outline-none focus:!ring-0 focus-visible:!border-0 focus-visible:!outline-none focus-visible:!ring-0 focus-visible:ring-offset-0"
+                />
+              </div>
+
+              <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2.5">
+                <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8A95A5]">
+                  Estado
+                </span>
+
+                {BILLING_FILTERS.map((status) => {
+                  const active = statusFilter === status;
+                  const label =
+                    status === "all" ? "Todos" : displayStatus(status);
+
+                  return (
+                    <button
+                      key={status}
+                      type="button"
+                      onClick={() => setStatusFilter(status)}
+                      className={[
+                        "rounded-full border px-[18px] py-2 text-[12px] font-medium transition-all",
+                        active
+                          ? "border-[#173B8F] bg-[#173B8F] text-white"
+                          : "border-[#DCE2E9] bg-white text-[#667386] hover:border-[#C6CFDA] hover:bg-[#F7F9FB] hover:text-[#173B8F]",
+                      ].join(" ")}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            {/* ==================================================
-                BOTONES DEL MODAL
-            ================================================== */}
+            {error ? (
+              <ErrorBlock message={error} />
+            ) : filteredDocuments.length === 0 ? (
+              <div className="border-y border-[#E7EBF0] py-12 text-center">
+                <Receipt
+                  className="mx-auto mb-4 h-7 w-7 text-[#AAB3BF]"
+                  strokeWidth={1.6}
+                />
 
-            <div className="flex flex-col-reverse gap-3 border-t border-[#E8ECF2] bg-[#FAFBFD] px-6 py-4 sm:flex-row sm:justify-end">
-              {/* CERRAR */}
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() =>
-                  setSelectedInvoice(null)
-                }
-              >
-                Cerrar
-              </Button>
+                <p className="text-[14px] font-semibold text-[#344054]">
+                  {totalBillingDocuments
+                    ? "No hay facturas que coincidan"
+                    : "Todavía no tienes facturas"}
+                </p>
 
-              {/* VER PDF */}
-              <Button
-                type="button"
-                variant="outline"
-                disabled={
-                  !selectedInvoice.document_path
-                }
-                onClick={() =>
-                  openInvoicePdf(
-                    selectedInvoice
-                  )
-                }
-                className="gap-2"
-              >
-                <Eye className="h-4 w-4" />
-                Ver PDF
-              </Button>
+                <p className="mx-auto mt-2 max-w-md text-[12px] leading-5 text-[#8792A2]">
+                  {totalBillingDocuments
+                    ? "Prueba con otro número, descripción, periodo o estado."
+                    : "Cuando tengas una factura asociada a tu cuenta aparecerá en este apartado."}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {filteredDocuments.map((document) => {
+                  const number = getDocumentNumber(document);
+                  const description = getDocumentDescription(document);
+                  const amount = getDocumentAmount(document);
+                  const overdue = isOverdue(document);
+                  const pdfAvailable = Boolean(
+                    getAvailablePdfPath(document),
+                  );
 
-              {/* DESCARGAR PDF */}
-              <Button
-                type="button"
-                variant="outline"
-                disabled={
-                  !selectedInvoice.document_path
-                }
-                onClick={() =>
-                  downloadInvoicePdf(
-                    selectedInvoice
-                  )
-                }
-                className="gap-2"
-              >
-                <Download className="h-4 w-4" />
-                Descargar PDF
-              </Button>
+                  const projectName =
+                    document.kind === "invoice" &&
+                    document.data.project_id
+                      ? projectById.get(
+                          document.data.project_id,
+                        )?.nombre
+                      : undefined;
 
-              {/* PAGAR
-                  Pendiente + vencida.
-                  Pagada NO.
-              */}
-              {canPayInvoice(
-                selectedInvoice
-              ) && (
-                <Button
-                  type="button"
-                  disabled={
-                    payingInvoice ===
-                    selectedInvoice.id
-                  }
-                  onClick={() =>
-                    handlePayInvoice(
-                      selectedInvoice
-                    )
-                  }
-                  className="gap-2 bg-[#173B8F] text-white hover:bg-[#102A66]"
-                >
-                  {payingInvoice ===
-                  selectedInvoice.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <CreditCard className="h-4 w-4" />
-                  )}
+                  return (
+                    <article
+                      key={getDocumentKey(document)}
+                      className="group relative overflow-hidden rounded-[20px] border border-[#E1E7EE] bg-white transition-all duration-200 hover:-translate-y-[1px] hover:border-[#CDD6E0] hover:shadow-[0_14px_34px_rgba(24,42,69,0.07)]"
+                    >
+                      <div className="relative px-5 py-5 sm:px-7 sm:py-6">
+                        <div className="flex items-start gap-6">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2.5">
+                              <span
+                                className={[
+                                  "inline-flex h-2 w-2 shrink-0 rounded-full",
+                                  statusDot(document.data.estado),
+                                ].join(" ")}
+                                aria-hidden="true"
+                              />
 
-                  {payingInvoice ===
-                  selectedInvoice.id
-                    ? "Procesando..."
-                    : "Pagar factura"}
-                </Button>
-              )}
+                              <h3 className="min-w-0 text-[17px] font-semibold leading-tight tracking-[-0.015em] text-[#1F3048] sm:text-[18px]">
+                                {number}
+                              </h3>
+
+                              <span className="rounded-full border border-[#E0E5EA] bg-white px-2.5 py-1 text-[10px] font-semibold leading-none text-[#667386]">
+                                {getDocumentTypeLabel(document)}
+                              </span>
+
+                              <span
+                                className={[
+                                  "rounded-full border px-2.5 py-1 text-[10px] font-semibold leading-none",
+                                  statusClasses(document.data.estado),
+                                ].join(" ")}
+                              >
+                                {displayStatus(document.data.estado)}
+                              </span>
+                            </div>
+
+                            {(() => {
+                              const parsed = getParsedDocumentDescription(document);
+
+                              if (
+                                !parsed.title &&
+                                !parsed.detail &&
+                                parsed.services.length === 0
+                              ) {
+                                return (
+                                  <p className="mt-3 max-w-3xl text-[12px] leading-5 text-[#718096]">
+                                    {description}
+                                  </p>
+                                );
+                              }
+
+                              return (
+                                <div className="mt-4 max-w-3xl space-y-2.5">
+                                  {parsed.title && (
+                                    <div className="flex flex-wrap gap-x-2 gap-y-1 text-[11px]">
+                                      <span className="font-semibold text-[#8A95A5]">
+                                        Título
+                                      </span>
+                                      <span className="text-[#536176]">
+                                        {parsed.title}
+                                      </span>
+                                    </div>
+                                  )}
+
+                                  {parsed.detail && (
+                                    <div className="text-[11px] leading-5">
+                                      <span className="font-semibold text-[#8A95A5]">
+                                        Descripción
+                                      </span>
+                                      <p className="mt-0.5 text-[#718096]">
+                                        {parsed.detail}
+                                      </p>
+                                    </div>
+                                  )}
+
+                                  {parsed.services.length > 0 && (
+                                    <div className="pt-1">
+                                      <p className="mb-1.5 text-[9px] font-semibold uppercase tracking-[0.13em] text-[#98A2B3]">
+                                        Servicios incluidos
+                                      </p>
+                                      <div className="space-y-1.5">
+                                        {parsed.services.map((service, index) => {
+  const priceParts = String(service.price || "").split(/Notas:\s*/i);
+  const priceValue = priceParts[0]?.trim() || "—";
+  const notesValue = priceParts[1]?.trim();
+
+  return (
+    <div
+      key={`${service.description}-${index}`}
+      className="grid grid-cols-[minmax(0,1fr)_70px_90px] items-center gap-3 rounded-lg border border-[#EEF1F4] bg-[#FAFBFC] px-3 py-2"
+    >
+      <span className="min-w-0 text-[11px] text-[#536176]">
+        {service.description}
+      </span>
+
+      <span className="text-right text-[10px] text-[#7A8595]">
+        {service.quantity ? `x${service.quantity}` : "—"}
+      </span>
+
+      <span className="text-right text-[10px] font-semibold text-[#445166]">
+        {priceValue}
+      </span>
+    </div>
+  );
+})}
+                                      </div>
+                                      {parsed.services.some((service) =>
+  /Notas:\s*/i.test(String(service.price || ""))
+) && (
+  <div className="mt-3 border-t border-[#EEF1F4] pt-3">
+    <p className="text-[9px] font-semibold uppercase tracking-[0.13em] text-[#98A2B3]">
+      Notas
+    </p>
+
+    <div className="mt-1.5 space-y-1">
+      {parsed.services.map((service, index) => {
+        const notesValue = String(service.price || "")
+          .split(/Notas:\s*/i)[1]
+          ?.trim();
+
+        if (!notesValue) return null;
+
+        return (
+          <p
+            key={`nota-${service.description}-${index}`}
+            className="text-[11px] leading-5 text-[#718096]"
+          >
+            {notesValue}
+          </p>
+        );
+      })}
+    </div>
+  </div>
+)}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+
+                            {projectName && (
+                              <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.1em] text-[#98A2B3]">
+                                Proyecto · {projectName}
+                              </p>
+                            )}
+
+                            {document.kind === "invoice" && document.data.project_id && (
+                              <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.1em] text-[#98A2B3]">
+                                Responsable · {projectOwnerLabel(document.data.project_id)}
+                              </p>
+                            )}
+
+
+                            <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-3">
+                              <div>
+                                <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#98A2B3]">
+                                  Emisión
+                                </p>
+                                <p className="mt-1 text-[11px] font-medium text-[#445166]">
+                                  {formatCompactDate(
+                                    document.data.fecha_emision,
+                                  )}
+                                </p>
+                              </div>
+
+                              <div className="h-7 w-px bg-[#E8ECF1]" />
+
+                              <div>
+                                <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#98A2B3]">
+                                  Vencimiento
+                                </p>
+                                <p
+                                  className={[
+                                    "mt-1 text-[11px] font-medium",
+                                    overdue
+                                      ? "text-[#A56A00]"
+                                      : "text-[#445166]",
+                                  ].join(" ")}
+                                >
+                                  {formatCompactDate(
+                                    document.data.fecha_vencimiento,
+                                  )}
+                                </p>
+                              </div>
+
+                              <div className="h-7 w-px bg-[#E8ECF1]" />
+
+                              <div>
+                                <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#98A2B3]">
+                                  Total a pagar
+                                </p>
+                                <p className="mt-1 text-[11px] font-semibold text-[#26344A]">
+                                  {formatCurrency(amount)}
+                                </p>
+                              </div>
+                            </div>
+
+                            {overdue && (
+                              <div className="mt-4 inline-flex items-center gap-1.5 text-[9px] font-medium text-[#A56A00]">
+                                <AlertCircle className="h-3 w-3" />
+                                Fecha de vencimiento superada
+                              </div>
+                            )}
+
+                            <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-[#EEF1F4] pt-4 text-[11px]">
+                              {document.data.fecha_pago && (
+                                <>
+                                  <span className="inline-flex items-center gap-1.5 text-[#7A8595]">
+                                    <Check
+                                      className="h-3.5 w-3.5 text-[#247A49]"
+                                      strokeWidth={1.7}
+                                    />
+                                    Pagada el{" "}
+                                    {formatCompactDate(
+                                      document.data.fecha_pago,
+                                    )}
+                                  </span>
+
+                                  <span className="hidden h-4 w-px bg-[#E5E9EE] sm:block" />
+                                </>
+                              )}
+
+                              {pdfAvailable && (
+                                <span className="inline-flex items-center gap-1.5 text-[#7A8595]">
+                                  <Download
+                                    className="h-3.5 w-3.5 text-[#9AA4B2]"
+                                    strokeWidth={1.7}
+                                  />
+                                  PDF disponible
+                                </span>
+                              )}
+
+                              <div className="ml-auto flex items-center gap-2">
+                                {pdfAvailable && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void handleViewPdf(document)
+                                      }
+                                      aria-label={`Ver PDF de ${number}`}
+                                      title="Ver PDF"
+                                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#DCE2E9] bg-white text-[#667386] transition-colors hover:border-[#173B8F] hover:bg-[#F3F6FC] hover:text-[#173B8F]"
+                                    >
+                                      <FileText
+                                        className="h-4 w-4"
+                                        strokeWidth={1.7}
+                                      />
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void handleDownloadPdf(document)
+                                      }
+                                      aria-label={`Descargar PDF de ${number}`}
+                                      title="Descargar PDF"
+                                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#DCE2E9] bg-white text-[#667386] transition-colors hover:border-[#173B8F] hover:bg-[#F3F6FC] hover:text-[#173B8F]"
+                                    >
+                                      <Download
+                                        className="h-4 w-4"
+                                        strokeWidth={1.7}
+                                      />
+                                    </button>
+                                  </>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => openDocument(document)}
+                                  className="inline-flex items-center gap-1.5 font-semibold text-[#173B8F] transition-all hover:gap-2 hover:text-[#102A66]"
+                                >
+                                  Consultar factura
+                                  <ArrowRight className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function BillingDetail({
+  document,
+  pdfOpened,
+  setPdfOpened,
+  projectName,
+  projectOwnerLabel,
+  isProjectOwner,
+  payments,
+  onViewPdf,
+  onDownloadPdf,
+  hasPdf,
+  overdue,
+  originalInvoiceNumber,
+}: {
+  document: BillingDocument;
+  pdfOpened: boolean;
+  setPdfOpened: (value: boolean) => void;
+  projectName?: string;
+  projectOwnerLabel: string;
+  isProjectOwner: boolean;
+  payments: Payment[];
+  onViewPdf: () => Promise<boolean>;
+  onDownloadPdf: () => void;
+  hasPdf: boolean;
+  overdue: boolean;
+  originalInvoiceNumber?: string;
+}) {
+  const data = document.data;
+
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const subtotal = Number(data.subtotal ?? 0);
+  const ivaImporte = Number(data.iva_importe ?? 0);
+  const irpfImporte = Number(data.irpf_importe ?? 0);
+  const grossAmount = Number(data.monto ?? 0);
+  const amountToPay = Number(data.importe_a_pagar ?? 0);
+  const normalizedInvoiceStatus = normalize(data.estado);
+  const [showIrpfInfo, setShowIrpfInfo] = useState(false);
+
+  const invoiceCanBePaid =
+    normalizedInvoiceStatus === "pendiente" ||
+    normalizedInvoiceStatus === "vencida";
+
+  const paymentReady =
+    invoiceCanBePaid &&
+    isProjectOwner &&
+    hasPdf &&
+    pdfOpened &&
+    acknowledged &&
+    !paymentLoading;
+  return (
+    <div className="space-y-8">
+  <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+<section className="overflow-visible border border-[#E3E8EE] bg-white">
+      {/* ============================================================
+    CABECERA
+============================================================ */}
+<div className="flex items-start justify-between gap-5 px-6 py-6 sm:px-8">
+  <div className="min-w-0">
+    <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#7C8797]">
+      Detalle de factura
+    </p>
+
+    {(() => {
+      const parsed = parseInvoiceDescription(data.descripcion);
+
+      return (
+        <>
+          <h2 className="mt-1.5 truncate text-xl font-semibold tracking-tight text-[#182A45]">
+            {parsed.title || "Factura"}
+          </h2>
+
+          {projectName && (
+            <p className="mt-1.5 text-[11px] font-medium text-[#8A95A5]">
+              Proyecto · {projectName}
+            </p>
+          )}
+
+          <p className="mt-1 text-[10px] font-medium uppercase tracking-[0.1em] text-[#98A2B3]">
+            Responsable · {projectOwnerLabel}
+          </p>
+        </>
+      );
+    })()}
+  </div>
+
+  {hasPdf && (
+    <div className="flex shrink-0 items-center gap-2">
+      <button
+        type="button"
+        onClick={async () => {
+          setPdfOpened(true);
+          await onViewPdf();
+        }}
+        aria-label="Ver PDF"
+        title="Ver PDF"
+        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#DCE2E9] bg-white text-[#667386] transition-all hover:border-[#173B8F] hover:bg-[#F3F6FC] hover:text-[#173B8F]"
+      >
+        <FileText className="h-4 w-4" strokeWidth={1.7} />
+      </button>
+
+      <button
+        type="button"
+        onClick={onDownloadPdf}
+        aria-label="Descargar PDF"
+        title="Descargar PDF"
+        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#DCE2E9] bg-white text-[#667386] transition-all hover:border-[#173B8F] hover:bg-[#F3F6FC] hover:text-[#173B8F]"
+      >
+        <Download className="h-4 w-4" strokeWidth={1.7} />
+      </button>
+    </div>
+  )}
+</div>
+
+      {/* ============================================================
+    CONTENIDO DE LA FACTURA
+============================================================ */}
+{data.descripcion && (
+  <div className="px-6 pb-7 pt-2 sm:px-8">
+    {(() => {
+      const parsed = parseInvoiceDescription(data.descripcion);
+
+      if (
+        !parsed.detail &&
+        parsed.services.length === 0
+      ) {
+        return (
+          <div>
+            <div className="border-t border-[#E7EBF0] pt-4">
+              <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#98A2B3]">
+                Descripción
+              </p>
+
+              <p className="mt-2 whitespace-pre-line text-[12px] leading-5 text-[#536176]">
+                {data.descripcion}
+              </p>
             </div>
           </div>
+        );
+      }
+
+      return (
+        <div>
+          {/* ==================================================
+              DESCRIPCIÓN DETALLADA
+          ================================================== */}
+          {parsed.detail && (
+            <div className="border-t border-[#E7EBF0] pt-4">
+              <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-[#98A2B3]">
+                Descripción detallada
+              </p>
+
+              <p className="mt-2 whitespace-pre-line text-[12px] leading-5 text-[#536176]">
+                {parsed.detail}
+              </p>
+            </div>
+          )}
+
+          {/* ==================================================
+              SERVICIOS INCLUIDOS
+          ================================================== */}
+          {parsed.services.length > 0 && (
+            <div className="mt-6 border-t border-[#EEF1F4] pt-5">
+
+              <p className="mb-3 text-[9px] font-semibold uppercase tracking-[0.12em] text-[#98A2B3]">
+                Servicios incluidos
+              </p>
+
+              <div className="overflow-hidden border-y border-[#E7EBF0]">
+
+                {/* CABECERA TABLA */}
+                <div className="grid grid-cols-[minmax(0,1fr)_90px_120px] items-center border-b border-[#E7EBF0] bg-[#F8FAFC] px-4 py-3">
+                  <span className="text-[9px] font-semibold uppercase tracking-[0.12em] text-[#8A95A5]">
+                    Servicio
+                  </span>
+
+                  <span className="text-right text-[9px] font-semibold uppercase tracking-[0.12em] text-[#8A95A5]">
+                    Cantidad
+                  </span>
+
+                  <span className="text-right text-[9px] font-semibold uppercase tracking-[0.12em] text-[#8A95A5]">
+                    Precio
+                  </span>
+                </div>
+
+                {/* SERVICIOS */}
+                <div className="divide-y divide-[#EEF1F4]">
+                  {parsed.services.map((service, index) => {
+                    const rawPrice = String(service.price || "");
+                    const priceParts = rawPrice.split(/Notas:\s*/i);
+                    const priceValue =
+                      priceParts[0]?.trim() || "—";
+                    const notesValue =
+                      priceParts[1]?.trim();
+
+                    return (
+                      <div
+                        key={`${service.description}-${index}`}
+                        className="px-4 py-4"
+                      >
+                        {/* FILA PRINCIPAL */}
+                        <div className="grid grid-cols-[minmax(0,1fr)_90px_120px] items-center">
+                          <div className="min-w-0 pr-5">
+                            <p className="text-[12px] font-medium text-[#445166]">
+                              {service.description}
+                            </p>
+                          </div>
+
+                          <span className="text-right text-[11px] text-[#718096]">
+                            {service.quantity || "—"}
+                          </span>
+
+                          <span className="text-right text-[12px] font-semibold text-[#26344A]">
+                            {priceValue}
+                          </span>
+                        </div>
+
+                        {/* NOTAS */}
+                        {notesValue && (
+                          <div className="mt-3 border-t border-[#EEF1F4] pt-2.5">
+                            <p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-[#98A2B3]">
+                              Notas
+                            </p>
+
+                            <p className="mt-1 text-[11px] leading-5 text-[#718096]">
+                              {notesValue}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    })()}
+  </div>
+)}
+
+      {data.rectifies_invoice_id && (
+        <div className="mx-6 mb-6 border border-[#DDD7E5] bg-[#F8F6FA] px-4 py-3 sm:mx-8">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#7C8797]">
+            Factura rectificativa
+          </p>
+          <p className="mt-1 text-[11px] leading-5 text-[#536176]">
+            Rectifica la factura{" "}
+            <span className="font-semibold text-[#4B3E57]">
+              {originalInvoiceNumber || "Factura original"}
+            </span>
+          </p>
+          {data.rectification_reason && (
+            <p className="mt-1 text-[11px] leading-5 text-[#718096]">
+              <span className="font-semibold text-[#536176]">Motivo: </span>
+              {data.rectification_reason}
+            </p>
+          )}
         </div>
       )}
 
-      {/* FOOTER */}
-      <footer className="mt-16 border-t bg-white py-8">
-        <div className="container mx-auto px-4 text-center text-sm text-[#7B8798]">
-          <p>
-            © {new Date().getFullYear()} Modira.
-            Todos los derechos reservados.
+      {/* ============================================================
+          RESUMEN ECONÓMICO
+      ============================================================ */}
+      <div className="border-t border-[#E7EBF0]">
+
+        <div className="grid grid-cols-1 divide-y divide-[#EEF1F4] sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-3">
+
+          {/* BASE IMPONIBLE */}
+          <div className="px-6 py-5 sm:px-7">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#98A2B3]">
+              Base imponible
+            </p>
+
+            <p className="mt-2 text-[15px] font-semibold tracking-tight text-[#26344A]">
+              {formatCurrency(subtotal)}
+            </p>
+          </div>
+
+          {/* IVA */}
+          <div className="px-6 py-5 sm:px-7">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#98A2B3]">
+              IVA {Number(data.iva_porcentaje ?? 0)}%
+            </p>
+
+            <p className="mt-2 text-[15px] font-semibold tracking-tight text-[#26344A]">
+              {formatCurrency(ivaImporte)}
+            </p>
+
+            <p className="mt-1 text-[10px] leading-4 text-[#98A2B3]">
+              Impuesto indirecto aplicado sobre la base imponible.
+            </p>
+          </div>
+
+          {/* IRPF */}
+<div className="relative px-6 py-5 sm:px-7">
+  <div className="flex items-start justify-between gap-3">
+    <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#98A2B3]">
+      IRPF
+      {Boolean(document.data.irpf_aplicado) &&
+        ` ${Number(data.irpf_porcentaje ?? 0)}%`}
+    </p>
+
+    {/* I INFORMATIVA — SIEMPRE VISIBLE */}
+   <div
+  className="relative shrink-0"
+  onMouseEnter={() => setShowIrpfInfo(true)}
+  onMouseLeave={() => setShowIrpfInfo(false)}
+>
+  <button
+        type="button"
+        onClick={() => setShowIrpfInfo((current) => !current)}
+        aria-label="Información sobre el IRPF"
+        title="Información sobre el IRPF"
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[#DCE2E9] bg-white text-[#7C8797] transition-colors hover:border-[#173B8F] hover:bg-[#F3F6FC] hover:text-[#173B8F]"
+      >
+        <Info className="h-3 w-3" strokeWidth={1.8} />
+      </button>
+
+      {showIrpfInfo && (
+        <div
+          className="absolute right-0 top-7 z-50 w-[300px] rounded-xl border border-[#DCE2E9] bg-white p-4 text-left shadow-[0_8px_30px_rgba(24,42,69,0.12)]"
+          onMouseEnter={() => setShowIrpfInfo(true)}
+        >
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#182A45]">
+            ¿Qué es el IRPF?
+          </p>
+
+          <p className="mt-2 text-[11px] leading-5 text-[#667386]">
+            Es una retención a cuenta del Impuesto sobre la Renta de las
+            Personas Físicas. Cuando corresponde, el pagador retiene una
+            parte del importe de los servicios profesionales y la ingresa
+            en Hacienda a nombre del profesional.
+          </p>
+
+          <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#182A45]">
+            ¿Cuándo se aplica?
+          </p>
+
+          <p className="mt-2 text-[11px] leading-5 text-[#667386]">
+            Se aplica en determinados rendimientos de actividades
+            profesionales cuando el pagador está obligado a practicar
+            retención. El tipo general es del 15 %, aunque existen
+            determinados supuestos en los que puede aplicarse un 7 %.
+            La aplicación concreta depende de la naturaleza del servicio
+            y de la situación fiscal del profesional.
           </p>
         </div>
-      </footer>
+      )}
+    </div>
+  </div>
+
+  <p className="mt-2 text-[15px] font-semibold tracking-tight text-[#26344A]">
+    {Boolean(document.data.irpf_aplicado)
+      ? `− ${formatCurrency(irpfImporte)}`
+      : "No aplicado"}
+  </p>
+
+  <p className="mt-1 text-[10px] leading-4 text-[#98A2B3]">
+    {Boolean(document.data.irpf_aplicado)
+      ? "Retención que suele descontarse del importe a pagar y que el cliente ingresa en Hacienda por cuenta del profesional."
+      : "No se practica esta retención en esta factura, por lo que no se descuenta del importe a pagar."}
+  </p>
+</div>
+        </div>
+
+        {/* ============================================================
+            IMPORTE A PAGAR
+        ============================================================ */}
+<div className="flex items-center justify-between gap-6 rounded-b-2xl border-t border-[#E7EBF0] bg-[#F8FAFC] px-6 py-5 sm:px-7">          <div>
+            <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#98A2B3]">
+              Importe a pagar
+            </p>
+
+            <p className="mt-1 text-[11px] text-[#718096]">
+              Cantidad exigible de la factura
+            </p>
+          </div>
+
+          <span className="shrink-0 text-[23px] font-semibold tracking-tight text-[#182A45]">
+            {formatCurrency(amountToPay)}
+          </span>
+        </div>
+      </div>
+    </section>
+  
+
+        <aside className="space-y-5">
+  {/* ============================================================
+      INFORMACIÓN
+  ============================================================ */}
+  <section className="border border-[#E3E8EE] bg-white p-5">
+    <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#7C8797]">
+      Información
+    </p>
+
+    <div className="mt-5 space-y-4">
+      <DetailInfo
+        label="Tipo"
+        value={getInvoiceTypeLabel(data)}
+      />
+
+      {data.rectifies_invoice_id && (
+        <>
+          <DetailInfo
+            label="Rectifica"
+            value={originalInvoiceNumber || "Factura original"}
+          />
+          <DetailInfo
+            label="Motivo de rectificación"
+            value={data.rectification_reason || "Sin motivo registrado."}
+          />
+        </>
+      )}
+
+      <DetailInfo
+        label="Número"
+        value={document.data.numero_factura}
+      />
+
+      <DetailInfo
+        label="Emisión"
+        value={formatDate(data.fecha_emision)}
+      />
+
+      <DetailInfo
+        label="Vencimiento"
+        value={formatDate(data.fecha_vencimiento)}
+        valueClass={overdue ? "text-[#A56A00]" : undefined}
+      />
+
+      {data.fecha_pago && (
+        <DetailInfo
+          label="Fecha de pago"
+          value={formatDate(data.fecha_pago)}
+          valueClass="text-[#247A49]"
+        />
+      )}
+
+      {projectName && (
+        <DetailInfo
+          label="Proyecto"
+          value={projectName}
+        />
+      )}
+
+      <DetailInfo
+        label="Responsable"
+        value={projectOwnerLabel}
+      />
+    </div>
+  </section>
+
+  {/* ============================================================
+      ALERTA DE VENCIMIENTO
+  ============================================================ */}
+  {overdue && (
+    <div className="border border-[#F0DEB7] bg-[#FFF7E8] px-5 py-4">
+      <div className="flex items-start gap-3">
+        <AlertCircle
+          className="mt-0.5 h-4 w-4 shrink-0 text-[#A56A00]"
+          strokeWidth={1.7}
+        />
+
+        <p className="text-[11px] leading-5 text-[#8B640F]">
+          La fecha de vencimiento de esta factura ya ha sido superada.
+        </p>
+      </div>
+    </div>
+  )}
+
+  {/* ============================================================
+      HISTORIAL DE PAGOS
+  ============================================================ */}
+  <section className="border border-[#E3E8EE] bg-white p-5">
+    <div className="flex items-end justify-between gap-3">
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#7C8797]">
+          Pagos
+        </p>
+
+        <h2 className="mt-1 text-[16px] font-semibold tracking-tight text-[#182A45]">
+          Historial de pagos
+        </h2>
+      </div>
+
+      <span className="shrink-0 text-[10px] text-[#8A95A5]">
+        {payments.length}{" "}
+        {payments.length === 1 ? "registro" : "registros"}
+      </span>
+    </div>
+
+    {payments.length === 0 ? (
+      <div className="mt-5 border-y border-[#EEF1F4] py-7 text-center">
+        <Clock3
+          className="mx-auto mb-3 h-5 w-5 text-[#AAB3BF]"
+          strokeWidth={1.6}
+        />
+
+        <p className="text-[11px] font-medium text-[#536176]">
+          No hay pagos registrados
+        </p>
+
+        <p className="mt-1 text-[10px] leading-4 text-[#8792A2]">
+          Los pagos confirmados se mostrarán aquí.
+        </p>
+      </div>
+    ) : (
+      <div className="mt-5 divide-y divide-[#EEF1F4] border-y border-[#EEF1F4]">
+        {payments.map((payment) => (
+          <div
+            key={payment.id}
+            className="py-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-[11px] font-medium text-[#445166]">
+                  {payment.description || "Pago de factura"}
+                </p>
+
+                <p className="mt-1 text-[9px] text-[#98A2B3]">
+                  {formatCompactDate(
+                    payment.paid_at || payment.created_at,
+                  )}
+                </p>
+              </div>
+
+              <span className="shrink-0 text-[11px] font-semibold text-[#26344A]">
+                {formatPaymentAmount(
+                  payment.amount,
+                  payment.currency,
+                )}
+              </span>
+            </div>
+
+            <div className="mt-2">
+              <span
+                className={[
+                  "inline-flex w-fit rounded-full border px-2.5 py-1 text-[9px] font-semibold",
+                  payment.status === "succeeded"
+                    ? "border-[#CDE8D8] bg-[#ECF8F1] text-[#247A49]"
+                    : payment.status === "failed" ||
+                        payment.status === "canceled"
+                      ? "border-[#E0E5EA] bg-[#F4F6F8] text-[#667386]"
+                      : "border-[#DDD7E5] bg-[#F3F0F6] text-[#4B3E57]",
+                ].join(" ")}
+              >
+                {payment.status === "succeeded"
+                  ? "Confirmado"
+                  : payment.status === "failed"
+                    ? "Fallido"
+                    : payment.status === "canceled"
+                      ? "Cancelado"
+                      : "Pendiente"}
+              </span>
+            </div>
+
+            {payment.stripe_payment_intent_id && (
+              <p className="mt-2 text-[9px] text-[#98A2B3]">
+                PaymentIntent registrado
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    )}
+  </section>
+</aside>
+      </div>
+
+    
+
+{invoiceCanBePaid && !isProjectOwner && (
+  <div className="border border-[#F0DEB7] bg-[#FFF7E8] px-5 py-4">
+    <p className="text-[11px] leading-5 text-[#8B640F]">
+      Solo el responsable del proyecto puede pagar esta factura.
+    </p>
+  </div>
+)}
+
+{invoiceCanBePaid && (
+  <PaymentAcknowledgementCard
+    amount={amountToPay}
+    pdfOpened={pdfOpened}
+    acknowledged={acknowledged}
+    paymentLoading={paymentLoading}
+    paymentReady={paymentReady}
+    hasPdf={hasPdf}
+    onOpenPdf={async () => {
+  if (!hasPdf) return;
+
+  setPdfOpened(true);
+  await onViewPdf();
+}}
+    onAcknowledgedChange={setAcknowledged}
+    onPay={async () => {
+      if (!paymentReady) return;
+
+      setPaymentLoading(true);
+
+      try {
+        // 1. Registrar la aceptación del documento actual
+        const {
+          error: acknowledgementError,
+        } = await supabase.rpc(
+          "record_invoice_document_acknowledgement",
+          {
+            p_invoice_id: data.id,
+          },
+        );
+
+        if (acknowledgementError) {
+          throw new Error(
+            acknowledgementError.message ||
+              "No se ha podido registrar la aceptación del documento.",
+          );
+        }
+
+        // 2. Crear Checkout Session en Stripe
+        const {
+          data: checkoutData,
+          error: checkoutError,
+        } = await supabase.functions.invoke(
+          "create-checkout-session",
+          {
+            body: {
+              invoice_id: data.id,
+            },
+          },
+        );
+
+        if (checkoutError) {
+  console.error(
+    "[create-checkout-session] ERROR COMPLETO:",
+    checkoutError,
+  );
+
+  console.error(
+    "[create-checkout-session] CONTEXT:",
+    checkoutError.context,
+  );
+
+  let backendError = "";
+
+  try {
+    if (checkoutError.context) {
+      backendError = await checkoutError.context.text();
+    }
+  } catch (error) {
+    console.error(
+      "[create-checkout-session] No se pudo leer el body del error:",
+      error,
+    );
+  }
+
+  console.error(
+    "[create-checkout-session] BODY DEVUELTO POR EDGE FUNCTION:",
+    backendError,
+  );
+
+  throw new Error(
+    backendError ||
+      checkoutError.message ||
+      "No se ha podido iniciar el pago.",
+  );
+}
+        if (!checkoutData?.checkout_url) {
+          throw new Error(
+            "Stripe no ha devuelto una URL de pago.",
+          );
+        }
+
+        // 3. Redirigir a Stripe
+        window.location.assign(
+          checkoutData.checkout_url,
+        );
+      } catch (paymentError) {
+        console.error(
+          "Error iniciando pago:",
+          paymentError,
+        );
+
+        toast.error(
+          paymentError instanceof Error
+            ? paymentError.message
+            : "No se ha podido iniciar el pago.",
+        );
+
+        setPaymentLoading(false);
+      }
+    }}
+  />
+)}
+
+    </div>
+  );
+}
+function PaymentAcknowledgementCard({
+  amount,
+  pdfOpened,
+  acknowledged,
+  paymentLoading,
+  paymentReady,
+  hasPdf,
+  onOpenPdf,
+  onAcknowledgedChange,
+  onPay,
+}: {
+  amount: number;
+  pdfOpened: boolean;
+  acknowledged: boolean;
+  paymentLoading: boolean;
+  paymentReady: boolean;
+  hasPdf: boolean;
+  onOpenPdf: () => Promise<void>;
+  onAcknowledgedChange: (value: boolean) => void;
+  onPay: () => void;
+}) {
+  return (
+    <section className="border border-[#DCE4F0] bg-white p-5 sm:p-7">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F3F6FC] text-[#173B8F]">
+          <ShieldCheck
+            className="h-4 w-4"
+            strokeWidth={1.7}
+          />
+        </div>
+
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#7C8797]">
+            Pago seguro
+          </p>
+
+          <h2 className="mt-1 text-[17px] font-semibold tracking-tight text-[#182A45]">
+            Pagar factura
+          </h2>
+
+          <p className="mt-1.5 text-[12px] leading-5 text-[#718096]">
+            Antes de realizar el pago, consulta el documento PDF
+            correspondiente a esta factura y confirma que has leído su contenido.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-5 border border-[#E4E9EF] bg-[#F8FAFC] p-4">
+        <div className="flex items-start gap-3">
+          <Info
+            className="mt-0.5 h-4 w-4 shrink-0 text-[#173B8F]"
+            strokeWidth={1.7}
+          />
+
+          <p className="text-[11px] leading-5 text-[#667386]">
+            La información mostrada en esta pantalla tiene carácter
+            meramente informativo. El documento PDF adjunto constituye
+            el documento de referencia de la factura y contiene la
+            información fiscal y legal correspondiente.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-5">
+        <button
+          type="button"
+          onClick={onOpenPdf}
+          disabled={!hasPdf || paymentLoading}
+          className={[
+            "inline-flex items-center gap-2 rounded-full border px-4 py-2.5 text-[11px] font-semibold transition-colors",
+            hasPdf
+              ? "border-[#DCE2E9] bg-white text-[#173B8F] hover:border-[#173B8F] hover:bg-[#F3F6FC]"
+              : "cursor-not-allowed border-[#E4E9EF] bg-[#F8FAFC] text-[#98A2B3]",
+          ].join(" ")}
+        >
+          <FileText
+            className="h-3.5 w-3.5"
+            strokeWidth={1.7}
+          />
+          {!hasPdf
+            ? "PDF no disponible"
+            : pdfOpened
+              ? "Volver a consultar PDF"
+              : "Consultar PDF antes de pagar"}
+        </button>
+      </div>
+
+      {!hasPdf && (
+        <div className="mt-4 border border-[#F0DEB7] bg-[#FFF7E8] px-4 py-3">
+          <p className="text-[11px] leading-5 text-[#8B640F]">
+            Esta factura todavía no tiene un PDF disponible. El pago se habilitará cuando exista el documento correspondiente.
+          </p>
+        </div>
+      )}
+
+      <label
+        className={[
+          "mt-5 flex cursor-pointer items-start gap-3 border p-4 transition-colors",
+          acknowledged
+            ? "border-[#C9D7EE] bg-[#F5F8FD]"
+            : "border-[#E4E9EF] bg-white hover:border-[#CCD5E0]",
+        ].join(" ")}
+      >
+        <input
+          type="checkbox"
+          checked={acknowledged}
+          onChange={(event) =>
+            onAcknowledgedChange(
+              event.target.checked,
+            )
+          }
+ disabled={!pdfOpened || paymentLoading}
+          className="mt-0.5 h-4 w-4 shrink-0 accent-[#173B8F]"
+        />
+
+        <span className="text-[11px] leading-5 text-[#536176]">
+          He leído el documento PDF correspondiente a esta factura
+          y declaro haber tenido acceso a su contenido, incluyendo
+          la información fiscal, legal y las condiciones indicadas
+          en el mismo.
+        </span>
+      </label>
+
+      <div className="mt-6 flex flex-col gap-4 border-t border-[#E7EBF0] pt-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-[#98A2B3]">
+            Importe a pagar
+          </p>
+
+          <p className="mt-1 text-xl font-semibold tracking-tight text-[#182A45]">
+            {formatCurrency(amount)}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onPay}
+          disabled={!paymentReady}
+          className={[
+            "inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-[11px] font-semibold transition-all",
+            paymentReady
+              ? "bg-[#173B8F] text-white hover:bg-[#102A66]"
+              : "cursor-not-allowed bg-[#E8EDF4] text-[#98A2B3]",
+          ].join(" ")}
+        >
+          {paymentLoading ? (
+            <>
+              <Loader2
+                className="h-3.5 w-3.5 animate-spin"
+                strokeWidth={1.8}
+              />
+              Preparando pago...
+            </>
+          ) : (
+            <>
+              <CreditCard
+                className="h-3.5 w-3.5"
+                strokeWidth={1.7}
+              />
+              Pagar factura
+            </>
+          )}
+        </button>
+      </div>
+
+      <div className="mt-4 flex items-center justify-end gap-1.5 text-[10px] text-[#8A95A5]">
+        <Lock
+          className="h-3 w-3"
+          strokeWidth={1.7}
+        />
+        Pago procesado de forma segura mediante Stripe
+      </div>
+    </section>
+  );
+}
+function DetailInfo({
+  label,
+  value,
+  valueClass,
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+}) {
+  return (
+    <div>
+      <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-[#98A2B3]">
+        {label}
+      </p>
+
+      <p
+        className={[
+          "mt-1 text-[11px] font-medium text-[#445166]",
+          valueClass || "",
+        ].join(" ")}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function ErrorBlock({ message }: { message: string }) {
+  return (
+    <div className="border-y border-[#E7EBF0] py-8">
+      <div className="flex items-start gap-3">
+        <AlertCircle
+          className="mt-0.5 h-5 w-5 shrink-0 text-[#B53A3A]"
+          strokeWidth={1.7}
+        />
+
+        <div>
+          <p className="text-[13px] font-semibold text-[#26344A]">
+            No se pudo cargar la facturación
+          </p>
+
+          <p className="mt-1 text-[12px] leading-5 text-[#718096]">
+            {message}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

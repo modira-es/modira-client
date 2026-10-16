@@ -20,11 +20,9 @@ const stripe = new Stripe(stripeSecretKey, {
 // ============================================================
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
-
 const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
-
 const supabaseServiceRoleKey = Deno.env.get(
-  "SUPABASE_SERVICE_ROLE_KEY"
+  "SUPABASE_SERVICE_ROLE_KEY",
 );
 
 if (!supabaseUrl) {
@@ -37,24 +35,12 @@ if (!supabaseAnonKey) {
 
 if (!supabaseServiceRoleKey) {
   throw new Error(
-    "SUPABASE_SERVICE_ROLE_KEY no está configurada"
+    "SUPABASE_SERVICE_ROLE_KEY no está configurada",
   );
 }
 
 // ============================================================
 // CORS
-// ============================================================
-//
-// AUDITORÍA V-08:
-//
-// Se sustituye "Access-Control-Allow-Origin: *" por una lista
-// explícita de orígenes configurada por entorno:
-//
-//   MODIRA_ALLOWED_ORIGINS="https://modira.es,https://www.modira.es"
-//
-// CORS no es un mecanismo de autenticación, pero reducir la
-// superficie de llamadas desde orígenes arbitrarios elimina
-// ruido y abuso simple de terceros.
 // ============================================================
 
 function getAllowedOrigins(): Set<string> {
@@ -68,15 +54,14 @@ function getAllowedOrigins(): Set<string> {
 
   if (origins.length === 0) {
     throw new Error(
-      "MODIRA_ALLOWED_ORIGINS no está configurada."
+      "MODIRA_ALLOWED_ORIGINS no está configurada.",
     );
   }
 
   return new Set(origins);
 }
 
-const allowedOrigins =
-  getAllowedOrigins();
+const allowedOrigins = getAllowedOrigins();
 
 function getCorsHeaders(origin: string | null) {
   const allowed =
@@ -86,12 +71,9 @@ function getCorsHeaders(origin: string | null) {
   const headers: Record<string, string> = {
     "Access-Control-Allow-Headers":
       "authorization, x-client-info, apikey, content-type",
-
     "Access-Control-Allow-Methods":
       "POST, OPTIONS",
-
-    "Vary":
-      "Origin",
+    "Vary": "Origin",
   };
 
   if (allowed && origin) {
@@ -102,18 +84,47 @@ function getCorsHeaders(origin: string | null) {
 }
 
 // ============================================================
+// ACKNOWLEDGEMENT
+// ============================================================
+
+const INVOICE_DOCUMENT_ACKNOWLEDGEMENT_VERSION =
+  "invoice_document_acknowledgement_v1";
+
+// ============================================================
+// RESPUESTA JSON
+// ============================================================
+
+function jsonResponse(
+  body: Record<string, unknown>,
+  status = 200,
+  corsHeaders: Record<string, string> = {},
+) {
+  return new Response(
+    JSON.stringify(body),
+    {
+      status,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+      },
+    },
+  );
+}
+
+// ============================================================
 // PREPARAR DESCRIPCIÓN DE FACTURA PARA STRIPE
 // ============================================================
 
 const formatInvoiceDescriptionForStripe = (
   description: string | null,
   invoiceNumber: string,
-  dueDate: string | null
+  dueDate: string | null,
 ): string => {
   if (!description || !description.trim()) {
     return dueDate
-      ? `Pago de la factura ${invoiceNumber}\nVencimiento: ${new Date(
-          dueDate
+      ? `Pago de la factura ${invoiceNumber}
+Vencimiento: ${new Date(
+          dueDate,
         ).toLocaleDateString("es-ES")}`
       : `Pago de la factura ${invoiceNumber}`;
   }
@@ -121,19 +132,19 @@ const formatInvoiceDescriptionForStripe = (
   const text = description.trim();
 
   const titleMatch = text.match(
-    /Título:\s*(.*?)(?=\n\s*\n|Descripción detallada:|Servicios incluidos:|Notas:|$)/i
+    /Título:\s*(.*?)(?=\n\s*\n|Descripción detallada:|Servicios incluidos:|Notas:|$)/i,
   );
 
   const detailMatch = text.match(
-    /Descripción detallada:\s*(.*?)(?=\n\s*\n|Servicios incluidos:|Notas:|$)/i
+    /Descripción detallada:\s*(.*?)(?=\n\s*\n|Servicios incluidos:|Notas:|$)/i,
   );
 
   const servicesMatch = text.match(
-    /Servicios incluidos:\s*([\s\S]*?)(?=\n\s*\nNotas:|Notas:|$)/i
+    /Servicios incluidos:\s*([\s\S]*?)(?=\n\s*\nNotas:|Notas:|$)/i,
   );
 
   const notesMatch = text.match(
-    /Notas:\s*([\s\S]*?)$/i
+    /Notas:\s*([\s\S]*?)$/i,
   );
 
   const title = titleMatch?.[1]?.trim() || "";
@@ -157,27 +168,12 @@ const formatInvoiceDescriptionForStripe = (
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => {
-        /*
-         * Convierte:
-         *
-         * - Diseño web | Cantidad: 1 | Precio: 20.00 €
-         *
-         * en:
-         *
-         * • Diseño web
-         *
-         * Stripe ya muestra el importe total,
-         * por lo que no mostramos el precio individual.
-         */
-
         const serviceMatch = line.match(
-          /^-\s*(.*?)\s*\|\s*Cantidad:\s*([^|]+)\s*\|\s*Precio:\s*(.+)$/i
+          /^-\s*(.*?)\s*\|\s*Cantidad:\s*([^|]+)\s*\|\s*Precio:\s*(.+)$/i,
         );
 
         if (serviceMatch) {
-          const serviceName = serviceMatch[1].trim();
-
-          return `• ${serviceName}`;
+          return `• ${serviceMatch[1].trim()}`;
         }
 
         return line.replace(/^-\s*/, "• ");
@@ -186,7 +182,7 @@ const formatInvoiceDescriptionForStripe = (
 
     if (formattedServices) {
       sections.push(
-        `Servicios incluidos:\n${formattedServices}`
+        `Servicios incluidos:\n${formattedServices}`,
       );
     }
   }
@@ -198,20 +194,15 @@ const formatInvoiceDescriptionForStripe = (
   if (dueDate) {
     sections.push(
       `Vencimiento: ${new Date(
-        dueDate
-      ).toLocaleDateString("es-ES")}`
+        dueDate,
+      ).toLocaleDateString("es-ES")}`,
     );
   }
-
-  /*
-   * Si no hemos podido interpretar la estructura,
-   * conservamos la descripción original.
-   */
 
   if (sections.length === 0) {
     return dueDate
       ? `${text}\nVencimiento: ${new Date(
-          dueDate
+          dueDate,
         ).toLocaleDateString("es-ES")}`
       : text;
   }
@@ -225,12 +216,12 @@ const formatInvoiceDescriptionForStripe = (
 
 const getInvoiceTitle = (
   description: string | null,
-  invoiceNumber: string
+  invoiceNumber: string,
 ): string => {
   const text = description?.trim() || "";
 
   const titleMatch = text.match(
-    /Título:\s*(.*?)(?=\n|Descripción detallada:|Servicios incluidos:|Notas:|$)/i
+    /Título:\s*(.*?)(?=\n|Descripción detallada:|Servicios incluidos:|Notas:|$)/i,
   );
 
   const title = titleMatch?.[1]?.trim();
@@ -239,24 +230,20 @@ const getInvoiceTitle = (
 };
 
 // ============================================================
-// OBTENER DESCRIPCIÓN CORTA DE FACTURA
+// LIMITAR TEXTOS PARA STRIPE
 // ============================================================
 
-const getInvoiceDetail = (
-  description: string | null
+const truncateForStripe = (
+  value: string,
+  maxLength: number,
 ): string => {
-  const text = description?.trim() || "";
+  const text = value.trim();
 
-  const detailMatch = text.match(
-    /Descripción detallada:\s*(.*?)(?=\n|Servicios incluidos:|Notas:|$)/i
-  );
+  if (text.length <= maxLength) {
+    return text;
+  }
 
-  const detail = detailMatch?.[1]?.trim();
-
-  return (
-    detail ||
-    "Pago correspondiente a esta factura."
-  );
+  return `${text.slice(0, maxLength - 3).trim()}...`;
 };
 
 // ============================================================
@@ -264,69 +251,69 @@ const getInvoiceDetail = (
 // ============================================================
 
 Deno.serve(async (req) => {
-  // ==========================================================
-  // 1. CORS (por petición, reflejando solo orígenes permitidos)
-  // ==========================================================
-
   const corsHeaders =
     getCorsHeaders(
-      req.headers.get("Origin")
+      req.headers.get("Origin"),
     );
 
+  // ==========================================================
+  // 1. CORS
+  // ==========================================================
+
   if (req.method === "OPTIONS") {
-    return new Response("ok", {
+    return new Response(null, {
+      status: 204,
       headers: corsHeaders,
     });
   }
 
+  // ==========================================================
+  // 2. SOLO POST
+  // ==========================================================
+
   if (req.method !== "POST") {
-    return new Response(
-      JSON.stringify({
-        error: "Método no permitido",
-      }),
+    return jsonResponse(
       {
-        status: 405,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-      }
+        error: "Método no permitido",
+      },
+      405,
+      corsHeaders,
     );
   }
 
   try {
     // ========================================================
-    // 2. AUTHORIZATION
+    // 3. AUTHORIZATION
     // ========================================================
 
-    const authHeader = req.headers.get("Authorization");
+    const authHeader =
+      req.headers.get("Authorization");
 
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({
-          error: "No autenticado",
-        }),
+    if (!authHeader?.startsWith("Bearer ")) {
+      return jsonResponse(
         {
-          status: 401,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
+          error: "No autenticado",
+        },
+        401,
+        corsHeaders,
+      );
+    }
+
+    const accessToken =
+      authHeader.substring("Bearer ".length).trim();
+
+    if (!accessToken) {
+      return jsonResponse(
+        {
+          error: "No autenticado",
+        },
+        401,
+        corsHeaders,
       );
     }
 
     // ========================================================
-    // 3. CLIENTE SUPABASE CON TOKEN DEL USUARIO
-    // ========================================================
-    //
-    // Este cliente respeta las RLS.
-    //
-    // Se utiliza para:
-    //
-    // - comprobar la sesión
-    // - comprobar ownership de la factura
-    //
+    // 4. CLIENTE SUPABASE CON TOKEN DEL USUARIO
     // ========================================================
 
     const supabase = createClient(
@@ -335,24 +322,18 @@ Deno.serve(async (req) => {
       {
         global: {
           headers: {
-            Authorization: authHeader,
+            Authorization: `Bearer ${accessToken}`,
           },
         },
-      }
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+        },
+      },
     );
 
     // ========================================================
-    // 4. CLIENTE SERVICE ROLE
-    // ========================================================
-    //
-    // SOLO SERVER-SIDE.
-    //
-    // NO se envía al navegador.
-    //
-    // Se utiliza únicamente para consultar el estado real
-    // del perfil porque un usuario bloqueado puede tener una
-    // RLS que le impida leer su propio perfil.
-    //
+    // 5. CLIENTE SERVICE ROLE
     // ========================================================
 
     const supabaseAdmin = createClient(
@@ -363,11 +344,11 @@ Deno.serve(async (req) => {
           autoRefreshToken: false,
           persistSession: false,
         },
-      }
+      },
     );
 
     // ========================================================
-    // 5. USUARIO ACTUAL
+    // 6. USUARIO ACTUAL
     // ========================================================
 
     const {
@@ -379,39 +360,26 @@ Deno.serve(async (req) => {
 
     if (userError || !user) {
       console.error(
-        "Error verificando usuario:",
-        userError
+        "[create-checkout-session] Error verificando usuario:",
+        userError,
       );
 
-      return new Response(
-        JSON.stringify({
-          error: "Sesión no válida",
-        }),
+      return jsonResponse(
         {
-          status: 401,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
+          error: "Sesión no válida",
+        },
+        401,
+        corsHeaders,
       );
     }
 
+    console.log(
+      "[create-checkout-session] Usuario autenticado:",
+      user.id,
+    );
+
     // ========================================================
-    // 6. COMPROBAR ESTADO DEL PERFIL
-    // ========================================================
-    //
-    // SEGURIDAD H-05
-    //
-    // IMPORTANTE:
-    //
-    // NO usamos aquí el cliente normal "supabase".
-    //
-    // Usamos "supabaseAdmin" porque un usuario bloqueado puede
-    // recibir 403 de RLS al intentar leer profiles.
-    //
-    // La decisión de bloqueo se toma en backend.
-    //
+    // 7. OBTENER PERFIL
     // ========================================================
 
     const {
@@ -419,89 +387,109 @@ Deno.serve(async (req) => {
       error: profileError,
     } = await supabaseAdmin
       .from("profiles")
-      .select("id, status")
+      .select("id, status, rol")
       .eq("id", user.id)
       .maybeSingle();
 
     if (profileError) {
       console.error(
-        "Error obteniendo estado del perfil:",
-        profileError
+        "[create-checkout-session] Error obteniendo perfil:",
+        profileError,
       );
 
-      return new Response(
-        JSON.stringify({
+      return jsonResponse(
+        {
           error:
             "No se ha podido verificar el estado de la cuenta",
-        }),
-        {
-          status: 500,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
+        },
+        500,
+        corsHeaders,
       );
     }
 
     // ========================================================
-    // 7. FAIL-CLOSED SI NO EXISTE PERFIL
+    // 8. PERFIL OBLIGATORIO
     // ========================================================
 
     if (!profile) {
       console.error(
-        "No existe perfil para el usuario:",
-        user.id
+        "[create-checkout-session] No existe perfil para:",
+        user.id,
       );
 
-      return new Response(
-        JSON.stringify({
+      return jsonResponse(
+        {
           error:
             "No se ha podido verificar la cuenta",
-        }),
-        {
-          status: 403,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
+        },
+        403,
+        corsHeaders,
       );
     }
 
     // ========================================================
-    // 8. BLOQUEO DE CUENTA
+    // 9. SOLO CLIENTES
+    // ========================================================
+    //
+    // Esta Edge Function crea un pago para una factura del
+    // cliente autenticado.
+    //
+    // Un worker no debe utilizar esta vía.
+    //
+    // No se utiliza ningún permiso worker aquí porque pagar
+    // una factura es una acción propia del cliente.
+    // ========================================================
+
+    if (profile.rol !== "user") {
+      console.warn(
+        "[create-checkout-session] Intento de checkout desde una cuenta no cliente:",
+        {
+          userId: user.id,
+          rol: profile.rol,
+        },
+      );
+
+      return jsonResponse(
+        {
+          error:
+            "Esta operación solo está disponible para cuentas de cliente",
+        },
+        403,
+        corsHeaders,
+      );
+    }
+
+    // ========================================================
+    // 10. CUENTA ACTIVA
     // ========================================================
 
     const profileStatus = String(
-      profile.status ?? ""
+      profile.status ?? "",
     )
       .trim()
       .toLowerCase();
 
-    if (profileStatus === "blocked") {
+    if (profileStatus !== "active") {
       console.warn(
-        "Intento de pago de usuario bloqueado:",
-        user.id
+        "[create-checkout-session] Cuenta no activa:",
+        {
+          userId: user.id,
+          status: profile.status,
+        },
       );
 
-      return new Response(
-        JSON.stringify({
-          error:
-            "Tu cuenta está bloqueada y no puede realizar pagos",
-        }),
+      return jsonResponse(
         {
-          status: 403,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
+          error:
+            "Tu cuenta no está activa y no puede realizar pagos",
+        },
+        403,
+        corsHeaders,
       );
     }
 
     // ========================================================
-    // 9. BODY
+    // 11. BODY
     // ========================================================
 
     let body: unknown;
@@ -509,66 +497,56 @@ Deno.serve(async (req) => {
     try {
       body = await req.json();
     } catch {
-      return new Response(
-        JSON.stringify({
-          error: "El cuerpo de la petición no es JSON válido",
-        }),
+      return jsonResponse(
         {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
+          error:
+            "El cuerpo de la petición no es JSON válido",
+        },
+        400,
+        corsHeaders,
       );
     }
 
     // ========================================================
-    // 10. INVOICE ID
+    // 12. INVOICE ID
     // ========================================================
 
     const invoiceId =
-      typeof (body as Record<string, unknown>)?.invoice_id ===
-      "string"
+      typeof (body as Record<string, unknown>)
+        ?.invoice_id === "string"
         ? String(
-            (body as Record<string, unknown>).invoice_id
+            (body as Record<string, unknown>)
+              .invoice_id,
           ).trim()
         : "";
 
     if (!invoiceId) {
-      return new Response(
-        JSON.stringify({
-          error: "invoice_id es obligatorio",
-        }),
+      return jsonResponse(
         {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
+          error: "invoice_id es obligatorio",
+        },
+        400,
+        corsHeaders,
       );
     }
 
+    console.log(
+      "[create-checkout-session] Solicitud de Checkout:",
+      {
+        invoiceId,
+        userId: user.id,
+      },
+    );
+
     // ========================================================
-    // 11. OBTENER FACTURA
+    // 13. OBTENER FACTURA
     // ========================================================
     //
-    // IMPORTANTE:
+    // Se mantiene la protección doble:
     //
-    // Seguimos utilizando el cliente normal del usuario.
+    //   RLS + user_id
     //
-    // La consulta exige:
-    //
-    //     invoice.id = invoiceId
-    //
-    // Y:
-    //
-    //     invoice.user_id = user.id
-    //
-    // Por tanto, el cliente NO puede solicitar una factura
-    // perteneciente a otro usuario.
-    //
+    // El frontend no puede decidir qué factura pagar.
     // ========================================================
 
     const {
@@ -585,8 +563,10 @@ Deno.serve(async (req) => {
           estado,
           importe_a_pagar,
           descripcion,
-          fecha_vencimiento
-        `
+          fecha_vencimiento,
+          document_path,
+          document_sha256
+        `,
       )
       .eq("id", invoiceId)
       .eq("user_id", user.id)
@@ -594,301 +574,482 @@ Deno.serve(async (req) => {
 
     if (invoiceError) {
       console.error(
-        "Error obteniendo factura:",
-        invoiceError
+        "[create-checkout-session] Error obteniendo factura:",
+        invoiceError,
       );
 
-      return new Response(
-        JSON.stringify({
-          error: "No se ha podido obtener la factura",
-        }),
+      return jsonResponse(
         {
-          status: 500,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
+          error:
+            "No se ha podido obtener la factura",
+          code:
+            invoiceError.code ??
+            "INVOICE_QUERY_ERROR",
+        },
+        500,
+        corsHeaders,
       );
     }
 
     // ========================================================
-    // 12. FACTURA NO EXISTE / NO PERTENECE AL USUARIO
+    // 14. FACTURA NO EXISTE / NO PERTENECE AL CLIENTE
     // ========================================================
 
     if (!invoice) {
-      return new Response(
-        JSON.stringify({
+      return jsonResponse(
+        {
           error:
             "La factura no existe o no tienes acceso a ella",
-        }),
-        {
-          status: 404,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
+        },
+        404,
+        corsHeaders,
       );
     }
 
     // ========================================================
-    // 13. ESTADO DE LA FACTURA
-    // ========================================================
-    //
-    // PAGADA:
-    //   No se puede volver a pagar.
-    //
-    // PENDIENTE:
-    //   Se puede pagar.
-    //
-    // VENCIDA:
-    //   También se puede pagar.
-    //
-    // CANCELADA:
-    //   No se puede pagar.
-    //
+    // 15. ESTADO DE LA FACTURA
     // ========================================================
 
     const normalizedStatus = String(
-      invoice.estado ?? ""
+      invoice.estado ?? "",
     )
       .trim()
       .toLowerCase();
 
     if (normalizedStatus === "pagada") {
-      return new Response(
-        JSON.stringify({
-          error: "La factura ya está pagada",
-        }),
+      return jsonResponse(
         {
-          status: 409,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
+          error: "La factura ya está pagada",
+        },
+        409,
+        corsHeaders,
       );
     }
 
     if (normalizedStatus === "cancelada") {
-      return new Response(
-        JSON.stringify({
+      return jsonResponse(
+        {
           error:
             "Esta factura está cancelada y no se puede pagar",
-        }),
-        {
-          status: 409,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
+        },
+        409,
+        corsHeaders,
       );
     }
 
     // ========================================================
-    // 14. IMPORTE REAL
+    // 16. DOCUMENTO PDF OBLIGATORIO
+    // ========================================================
+
+    const documentPath =
+      String(
+        invoice.document_path ?? "",
+      ).trim();
+
+    if (!documentPath) {
+      return jsonResponse(
+        {
+          error:
+            "Esta factura no tiene un documento PDF asociado y no puede iniciar el pago.",
+          code:
+            "INVOICE_DOCUMENT_REQUIRED",
+        },
+        409,
+        corsHeaders,
+      );
+    }
+
+    // ========================================================
+    // 17. SHA-256 OBLIGATORIO
+    // ========================================================
+
+    const documentSha256 =
+      String(
+        invoice.document_sha256 ?? "",
+      )
+        .trim()
+        .toLowerCase();
+
+    if (
+      !/^[0-9a-f]{64}$/.test(
+        documentSha256,
+      )
+    ) {
+      return jsonResponse(
+        {
+          error:
+            "El documento de esta factura todavía no está validado. No se puede iniciar el pago.",
+          code:
+            "INVOICE_DOCUMENT_HASH_REQUIRED",
+        },
+        409,
+        corsHeaders,
+      );
+    }
+
+    // ========================================================
+    // 18. COMPROBAR ACEPTACIÓN DEL DOCUMENTO
     // ========================================================
     //
-    // El importe NO viene del frontend.
+    // Se comprueba server-side.
     //
-    // Se obtiene directamente de:
+    // Deben coincidir:
     //
-    //     invoices.importe_a_pagar
+    //   invoice_id
+    //   user_id
+    //   document_path
+    //   document_sha256
+    //   acknowledgement_text_version
+    // ========================================================
+
+    const {
+      data: acknowledgement,
+      error: acknowledgementError,
+    } = await supabaseAdmin
+      .from("invoice_document_acknowledgements")
+      .select(
+        `
+          id,
+          invoice_id,
+          user_id,
+          document_path,
+          document_sha256,
+          acknowledgement_text_version,
+          accepted_at
+        `,
+      )
+      .eq("invoice_id", invoice.id)
+      .eq("user_id", user.id)
+      .eq("document_path", documentPath)
+      .eq("document_sha256", documentSha256)
+      .eq(
+        "acknowledgement_text_version",
+        INVOICE_DOCUMENT_ACKNOWLEDGEMENT_VERSION,
+      )
+      .order("accepted_at", {
+        ascending: false,
+      })
+      .limit(1)
+      .maybeSingle();
+
+    if (acknowledgementError) {
+      console.error(
+        "[create-checkout-session] Error comprobando aceptación:",
+        acknowledgementError,
+      );
+
+      return jsonResponse(
+        {
+          error:
+            "No se ha podido verificar la aceptación del documento de la factura.",
+          code:
+            acknowledgementError.code ??
+            "ACKNOWLEDGEMENT_QUERY_ERROR",
+        },
+        500,
+        corsHeaders,
+      );
+    }
+
+    if (!acknowledgement) {
+      return jsonResponse(
+        {
+          error:
+            "Debes abrir y leer el documento PDF de la factura y aceptar la declaración correspondiente antes de realizar el pago.",
+          code:
+            "INVOICE_DOCUMENT_ACKNOWLEDGEMENT_REQUIRED",
+        },
+        409,
+        corsHeaders,
+      );
+    }
+
+    // ========================================================
+    // 19. COMPROBACIÓN EXPLÍCITA DE INTEGRIDAD
+    // ========================================================
+
+    if (
+      String(
+        acknowledgement.document_sha256 ?? "",
+      )
+        .trim()
+        .toLowerCase() !== documentSha256
+    ) {
+      console.error(
+        "[create-checkout-session] Inconsistencia de hash:",
+        {
+          invoiceId: invoice.id,
+          userId: user.id,
+        },
+      );
+
+      return jsonResponse(
+        {
+          error:
+            "La aceptación registrada no corresponde al documento actual de la factura.",
+          code:
+            "INVOICE_DOCUMENT_HASH_MISMATCH",
+        },
+        409,
+        corsHeaders,
+      );
+    }
+
+    // ========================================================
+    // 20. IMPORTE REAL
+    // ========================================================
     //
-    // Esto coincide con el diseño fiscal de MODIRA:
-    //
-    // importe_a_pagar = monto - irpf_importe
-    //
+    // El importe siempre procede de la BD.
+    // Nunca del frontend.
     // ========================================================
 
     const amountInEuros = Number(
-      invoice.importe_a_pagar
+      invoice.importe_a_pagar,
     );
 
     if (
       !Number.isFinite(amountInEuros) ||
       amountInEuros <= 0
     ) {
-      return new Response(
-        JSON.stringify({
+      console.error(
+        "[create-checkout-session] Importe inválido:",
+        invoice.importe_a_pagar,
+      );
+
+      return jsonResponse(
+        {
           error:
             "El importe de la factura no es válido",
-        }),
-        {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
+        },
+        400,
+        corsHeaders,
       );
     }
 
     // ========================================================
-    // 15. EUROS → CÉNTIMOS
+    // 21. EUROS → CÉNTIMOS
     // ========================================================
 
     const amountInCents = Math.round(
-      amountInEuros * 100
+      amountInEuros * 100,
     );
 
     if (amountInCents <= 0) {
-      return new Response(
-        JSON.stringify({
+      return jsonResponse(
+        {
           error:
             "El importe calculado para Stripe no es válido",
-        }),
-        {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
+        },
+        400,
+        corsHeaders,
       );
     }
 
-   // ========================================================
-// 16. APP URL
-// ========================================================
+    // ========================================================
+    // 22. APP URL
+    // ========================================================
 
-const appUrl = Deno.env.get("APP_URL");
+    const rawAppUrl =
+      Deno.env.get("APP_URL");
 
-if (!appUrl) {
-  console.error(
-    "APP_URL no está configurada."
-  );
-
-  return new Response(
-    JSON.stringify({
-      error:
-        "Configuración de checkout no disponible.",
-    }),
-    {
-      status: 503,
-      headers: {
-        ...corsHeaders,
-        "Content-Type": "application/json",
-      },
+    if (!rawAppUrl) {
+      return jsonResponse(
+        {
+          error:
+            "Configuración de checkout no disponible.",
+        },
+        503,
+        corsHeaders,
+      );
     }
-  );
-}
+
+    const appUrl = rawAppUrl
+      .trim()
+      .replace(/\/+$/, "");
+
+    if (!appUrl) {
+      return jsonResponse(
+        {
+          error:
+            "Configuración de checkout no disponible.",
+        },
+        503,
+        corsHeaders,
+      );
+    }
 
     // ========================================================
-    // 17. DESCRIPCIÓN PARA STRIPE
+    // 23. PREPARAR INFORMACIÓN PARA STRIPE
     // ========================================================
 
-    const stripeDescription =
+    const invoiceNumber =
+      String(
+        invoice.numero_factura ?? "",
+      ).trim() ||
+      invoice.id;
+
+    const rawTitle = getInvoiceTitle(
+      invoice.descripcion,
+      invoiceNumber,
+    );
+
+    const rawDescription =
       formatInvoiceDescriptionForStripe(
         invoice.descripcion,
-        invoice.numero_factura,
-        invoice.fecha_vencimiento
+        invoiceNumber,
+        invoice.fecha_vencimiento,
+      );
+
+    const stripeProductName =
+      truncateForStripe(
+        rawTitle,
+        250,
+      );
+
+    const stripeDescription =
+      truncateForStripe(
+        rawDescription,
+        500,
       );
 
     // ========================================================
-    // 18. CREAR CHECKOUT SESSION
+    // 24. CREAR CHECKOUT SESSION
     // ========================================================
 
-    const session =
-      await stripe.checkout.sessions.create({
-        mode: "payment",
+    let session: Stripe.Checkout.Session;
 
-        line_items: [
-          {
-            price_data: {
-              currency: "eur",
+    try {
+      session =
+        await stripe.checkout.sessions.create({
+          mode: "payment",
 
-              product_data: {
-                name: getInvoiceTitle(
-                  invoice.descripcion,
-                  invoice.numero_factura
-                ),
+          line_items: [
+            {
+              price_data: {
+                currency: "eur",
 
-                description: getInvoiceDetail(
-                  invoice.descripcion
-                ),
+                product_data: {
+                  name: stripeProductName,
+                  description:
+                    stripeDescription,
+                },
+
+                unit_amount:
+                  amountInCents,
               },
 
-              unit_amount: amountInCents,
+              quantity: 1,
             },
+          ],
 
-            quantity: 1,
-          },
-        ],
-
-        metadata: {
-          invoice_id: invoice.id,
-          company_id: invoice.company_id || "",
-          user_id: invoice.user_id,
-        },
-
-        payment_intent_data: {
           metadata: {
             invoice_id: invoice.id,
-            company_id: invoice.company_id || "",
+            company_id:
+              invoice.company_id || "",
             user_id: invoice.user_id,
           },
+
+          payment_intent_data: {
+            metadata: {
+              invoice_id: invoice.id,
+              company_id:
+                invoice.company_id || "",
+              user_id: invoice.user_id,
+            },
+          },
+
+          success_url:
+            `${appUrl}/area-cliente/facturacion?payment=success&invoice_id=${invoice.id}`,
+
+          cancel_url:
+            `${appUrl}/area-cliente/facturacion?payment=cancelled&invoice_id=${invoice.id}`,
+
+          customer_email:
+            user.email || undefined,
+        });
+    } catch (stripeError) {
+      console.error(
+        "[create-checkout-session] ERROR DE STRIPE:",
+        stripeError,
+      );
+
+      return jsonResponse(
+        {
+          error:
+            stripeError instanceof Error
+              ? stripeError.message
+              : "Stripe ha rechazado la creación del Checkout",
+          code:
+            "STRIPE_CHECKOUT_CREATION_ERROR",
         },
-
-        success_url:
-          `${appUrl}/area-cliente/facturacion?payment=success&invoice_id=${invoice.id}`,
-
-        cancel_url:
-          `${appUrl}/area-cliente/facturacion?payment=cancelled&invoice_id=${invoice.id}`,
-
-        customer_email:
-          user.email || undefined,
-      });
+        500,
+        corsHeaders,
+      );
+    }
 
     // ========================================================
-    // 19. COMPROBAR URL
+    // 25. COMPROBAR URL
     // ========================================================
 
     if (!session.url) {
-      throw new Error(
-        "Stripe no ha devuelto una URL de Checkout"
+      console.error(
+        "[create-checkout-session] Stripe no ha devuelto URL:",
+        {
+          sessionId: session.id,
+          status: session.status,
+        },
+      );
+
+      return jsonResponse(
+        {
+          error:
+            "Stripe no ha devuelto una URL de Checkout",
+          code:
+            "STRIPE_CHECKOUT_URL_MISSING",
+        },
+        500,
+        corsHeaders,
       );
     }
 
+    console.log(
+      "[create-checkout-session] Checkout creado correctamente:",
+      {
+        sessionId: session.id,
+        invoiceId: invoice.id,
+        amountInCents,
+      },
+    );
+
     // ========================================================
-    // 20. RESPUESTA
+    // 26. RESPUESTA
     // ========================================================
 
-    return new Response(
-      JSON.stringify({
+    return jsonResponse(
+      {
         success: true,
         checkout_url: session.url,
-      }),
-      {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-      }
+      },
+      200,
+      corsHeaders,
     );
   } catch (error) {
     console.error(
-      "create-checkout-session error:",
-      error
+      "[create-checkout-session] ERROR INTERNO:",
+      error,
     );
 
-    return new Response(
-      JSON.stringify({
+    return jsonResponse(
+      {
         error:
           error instanceof Error
             ? error.message
             : "Error interno al crear el pago",
-      }),
-      {
-        status: 500,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-      }
+        code:
+          "CREATE_CHECKOUT_SESSION_ERROR",
+      },
+      500,
+      corsHeaders,
     );
   }
 });

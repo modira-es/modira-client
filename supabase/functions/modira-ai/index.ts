@@ -70,6 +70,8 @@ const GLOBAL_AI_RATE_WINDOW_SECONDS = 60 * 60;
 
 const OPENAI_TIMEOUT_MS = 30000;
 
+const OPENAI_MODEL = "gpt-5.4-mini";
+
 
 // ============================================================
 // ESTADO EN MEMORIA
@@ -991,6 +993,57 @@ async function reserveAiQuota(
 // FINALIZAR CUOTA
 // ============================================================
 
+// ============================================================
+// VINCULAR RESERVA A CONVERSACIÓN Y MODELO
+// ============================================================
+//
+// La migración 046 añade conversation_id y model a
+// ai_usage_reservations. La reserva se crea antes de la llamada
+// a OpenAI, pero la conversación se conoce después. Por eso se
+// enlaza aquí, inmediatamente después de obtener/crear la
+// conversación y antes de realizar cualquier llamada a OpenAI.
+//
+// La RPC es exclusivamente service_role y no modifica cuotas.
+// Si falla, se aborta la solicitud para no generar consumo real
+// que quede sin atribución en el panel de trabajador.
+//
+// ============================================================
+
+async function linkAiUsageReservationContext(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  reservationId: string,
+  conversationId: string,
+  model: string
+): Promise<void> {
+  const result =
+    await supabaseRequest<boolean | Array<boolean>>(
+      supabaseUrl,
+      serviceRoleKey,
+      "rpc/link_ai_usage_reservation_context",
+      {
+        method: "POST",
+
+        body: {
+          p_reservation_id: reservationId,
+          p_conversation_id: conversationId,
+          p_model: model,
+        },
+      }
+    );
+
+  const linked =
+    result === true ||
+    (Array.isArray(result) && result[0] === true);
+
+  if (!linked) {
+    throw new Error(
+      "La RPC de vinculación de la reserva no devolvió un resultado válido."
+    );
+  }
+}
+
+
 async function finalizeAiQuota(
   supabaseUrl: string,
   serviceRoleKey: string,
@@ -1601,7 +1654,7 @@ async function callOpenAI(
           body:
             JSON.stringify({
               model:
-                "gpt-5.4-mini",
+                OPENAI_MODEL,
 
               instructions,
 
@@ -1881,6 +1934,49 @@ function parseCompanyExtraction(
 
 
 // ============================================================
+// RBAC — USUARIO WORKER
+// ============================================================
+
+async function workerHasAiUsePermission(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  authorizationHeader: string
+): Promise<boolean> {
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/rpc/current_worker_has_permission`,
+    {
+      method: "POST",
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: authorizationHeader,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        p_permission_code: "ai.use",
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    console.error(
+      "MODIRA AI: error comprobando permiso ai.use.",
+      response.status,
+      errorText.slice(0, 300)
+    );
+    throw new Error("No se pudo comprobar el permiso de IA del trabajador.");
+  }
+
+  const result = await parseJsonResponse<boolean | boolean[]>(response);
+
+  return (
+    result === true ||
+    (Array.isArray(result) && result[0] === true)
+  );
+}
+
+
+// ============================================================
 // MAIN
 // ============================================================
 
@@ -2150,6 +2246,8 @@ Deno.serve(
       | string
       | null = null;
 
+    let isActiveWorker = false;
+
     if (
       authHeader &&
       !/^Bearer\s+\S+$/i.test(
@@ -2312,6 +2410,66 @@ Deno.serve(
 
           origin
         );
+      }
+
+      // Los clientes mantienen exactamente el flujo actual.
+      // Solo una cuenta que además exista como worker activo
+      // queda sujeta al permiso RBAC específico de uso de IA.
+      const workerRows =
+        await supabaseRequest<
+          Array<{
+            auth_user_id: string;
+            is_active: boolean;
+          }>
+        >(
+          supabaseUrl,
+          supabaseServiceRoleKey,
+          `workers?auth_user_id=eq.${encodeURIComponent(
+            userId
+          )}&is_active=eq.true&select=auth_user_id,is_active&limit=1`
+        );
+
+      isActiveWorker =
+        Array.isArray(workerRows) &&
+        workerRows.length > 0 &&
+        workerRows[0]?.is_active === true;
+
+      if (isActiveWorker) {
+        try {
+          const hasAiUsePermission =
+            await workerHasAiUsePermission(
+              supabaseUrl,
+              supabaseServiceRoleKey,
+              authHeader
+            );
+
+          if (!hasAiUsePermission) {
+            return jsonResponse(
+              {
+                error:
+                  "Acceso denegado: no tienes permiso para utilizar Modira AI.",
+              },
+              403,
+              origin
+            );
+          }
+        } catch (error) {
+          console.error(
+            "MODIRA AI: no se pudo validar ai.use.",
+            error instanceof Error
+              ? error.message
+              : "unknown error"
+          );
+
+          return jsonResponse(
+            {
+              error:
+                "No se ha podido verificar el permiso de Modira AI.",
+            },
+            503,
+            origin
+          );
+        }
       }
 
       companyId =
@@ -2825,7 +2983,12 @@ Deno.serve(
       // CUOTA — RESERVA ATÓMICA ANTES DE OPENAI
       // ======================================================
 
-      const estimatedInputTokens =
+      // La solicitud realiza hasta DOS llamadas a OpenAI:
+      // 1) respuesta principal
+      // 2) extracción de empresa/sector
+      // La reserva debe contemplar ambas para que la protección
+      // económica no subestime el consumo máximo de la petición.
+      const estimatedMainInputTokens =
         Math.ceil(
           (
             MODIRA_INSTRUCTIONS.length +
@@ -2833,8 +2996,18 @@ Deno.serve(
           ) / 4
         );
 
+      const estimatedExtractionInputTokens =
+        Math.ceil(
+          MAX_TOTAL_HISTORY_CHARS / 4
+        );
+
+      const estimatedInputTokens =
+        estimatedMainInputTokens +
+        estimatedExtractionInputTokens;
+
       const estimatedOutputTokens =
-  aiQuotaConfig.max_output_tokens;
+        aiQuotaConfig.max_output_tokens +
+        120;
 
       const inputCostCentsPer1K =
         Number(
@@ -2950,6 +3123,25 @@ Deno.serve(
 
       const conversationId =
         conversation.id;
+
+
+      // ======================================================
+      // VINCULAR RESERVA A CONVERSACIÓN / MODELO
+      // ======================================================
+      //
+      // La migración 046 necesita esta asociación para que el
+      // panel de trabajadores pueda atribuir tokens y coste a
+      // la conversación concreta. Se hace antes de OpenAI.
+      //
+      if (quotaReservationId) {
+        await linkAiUsageReservationContext(
+          supabaseUrl,
+          supabaseServiceRoleKey,
+          quotaReservationId,
+          conversationId,
+          OPENAI_MODEL
+        );
+      }
 
 
       // ======================================================

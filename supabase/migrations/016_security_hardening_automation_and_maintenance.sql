@@ -586,7 +586,636 @@ GRANT EXECUTE
 ON FUNCTION public.set_profile_status(UUID, TEXT)
 TO authenticated;
 
+-- ============================================================
+-- 15. SOLICITUD Y GESTIÓN DE ELIMINACIÓN DE CUENTA
+-- ============================================================
+--
+-- CLIENTE:
+--
+--   Puede solicitar la eliminación de su propia cuenta.
+--
+-- WORKER:
+--
+--   Puede aprobar o rechazar la solicitud.
+--
+-- ESTADOS:
+--
+--   pending   = solicitud pendiente de revisión
+--   approved  = aprobada por un worker
+--   rejected  = rechazada por un worker
+--   blocked   = aprobada pero bloqueada por reglas de negocio
+--   completed = eliminación completada
+--   failed    = error técnico durante la eliminación
+--
+-- IMPORTANTE:
+--
+-- Esta migración NO concede DELETE sobre auth.users.
+--
+-- La eliminación física de la cuenta de Auth se realizará
+-- posteriormente desde una Edge Function/backend utilizando
+-- privilegios administrativos.
+--
+-- ============================================================
 
+
+-- ============================================================
+-- 15.1 TABLA DE SOLICITUDES
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.account_deletion_requests (
+
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    user_id UUID
+        REFERENCES auth.users(id)
+        ON DELETE SET NULL,
+
+    status TEXT NOT NULL DEFAULT 'pending',
+
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    reviewed_at TIMESTAMPTZ,
+
+    reviewed_by UUID
+        REFERENCES auth.users(id)
+        ON DELETE SET NULL,
+
+    rejection_reason TEXT,
+
+    CONSTRAINT account_deletion_requests_status_check
+    CHECK (
+        status IN (
+            'pending',
+            'approved',
+            'rejected',
+            'blocked',
+            'completed',
+            'failed'
+        )
+    ),
+
+    CONSTRAINT account_deletion_requests_rejection_reason_check
+    CHECK (
+        rejection_reason IS NULL
+        OR LENGTH(TRIM(rejection_reason)) <= 1000
+    )
+);
+
+
+-- ============================================================
+-- 15.2 ÍNDICES
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS
+    idx_account_deletion_requests_user_id
+ON public.account_deletion_requests (
+    user_id
+);
+
+
+CREATE INDEX IF NOT EXISTS
+    idx_account_deletion_requests_status
+ON public.account_deletion_requests (
+    status
+);
+
+
+CREATE INDEX IF NOT EXISTS
+    idx_account_deletion_requests_requested_at
+ON public.account_deletion_requests (
+    requested_at DESC
+);
+
+
+-- ============================================================
+-- 15.3 UNA SOLICITUD PENDING POR CLIENTE
+-- ============================================================
+
+CREATE UNIQUE INDEX IF NOT EXISTS
+    idx_account_deletion_requests_one_pending_per_user
+ON public.account_deletion_requests (
+    user_id
+)
+WHERE status = 'pending'
+  AND user_id IS NOT NULL;
+
+
+-- ============================================================
+-- 15.4 RLS
+-- ============================================================
+
+ALTER TABLE public.account_deletion_requests
+ENABLE ROW LEVEL SECURITY;
+
+
+-- ------------------------------------------------------------
+-- El cliente NO tiene INSERT / UPDATE / DELETE directo.
+-- ------------------------------------------------------------
+
+REVOKE INSERT, UPDATE, DELETE
+ON public.account_deletion_requests
+FROM anon, authenticated;
+
+
+-- ------------------------------------------------------------
+-- Cliente:
+-- únicamente puede consultar sus propias solicitudes.
+-- ------------------------------------------------------------
+
+DROP POLICY IF EXISTS
+    account_deletion_requests_client_select
+ON public.account_deletion_requests;
+
+
+CREATE POLICY
+    account_deletion_requests_client_select
+ON public.account_deletion_requests
+FOR SELECT
+TO authenticated
+USING (
+    public.current_user_is_active()
+    AND NOT public.current_user_is_worker()
+    AND user_id = auth.uid()
+);
+
+
+-- ------------------------------------------------------------
+-- Worker:
+-- puede consultar solicitudes de eliminación.
+-- ------------------------------------------------------------
+
+DROP POLICY IF EXISTS
+    account_deletion_requests_worker_select
+ON public.account_deletion_requests;
+
+
+CREATE POLICY
+    account_deletion_requests_worker_select
+ON public.account_deletion_requests
+FOR SELECT
+TO authenticated
+USING (
+    public.current_user_is_worker()
+);
+
+
+GRANT SELECT
+ON public.account_deletion_requests
+TO authenticated;
+
+
+-- ============================================================
+-- 15.5 RPC — CLIENTE SOLICITA ELIMINACIÓN
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.request_account_deletion()
+RETURNS public.account_deletion_requests
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_request public.account_deletion_requests;
+BEGIN
+
+    -- --------------------------------------------------------
+    -- AUTENTICACIÓN
+    -- --------------------------------------------------------
+
+    IF auth.uid() IS NULL THEN
+        RAISE EXCEPTION
+            'Usuario no autenticado';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- CUENTA ACTIVA
+    -- --------------------------------------------------------
+
+    IF NOT public.current_user_is_active() THEN
+        RAISE EXCEPTION
+            'La cuenta no está activa';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- SOLO CLIENTES
+    -- --------------------------------------------------------
+
+    IF public.current_user_is_worker() THEN
+        RAISE EXCEPTION
+            'Los trabajadores no pueden solicitar la eliminación mediante esta función';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- EL PERFIL DEBE EXISTIR
+    -- --------------------------------------------------------
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.profiles
+        WHERE id = auth.uid()
+    ) THEN
+        RAISE EXCEPTION
+            'Perfil de usuario no encontrado';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- NO PERMITIR SOLICITUD DUPLICADA
+    -- --------------------------------------------------------
+
+    IF EXISTS (
+        SELECT 1
+        FROM public.account_deletion_requests
+        WHERE user_id = auth.uid()
+          AND status = 'pending'
+    ) THEN
+        RAISE EXCEPTION
+            'Ya existe una solicitud de eliminación pendiente';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- CREAR SOLICITUD
+    -- --------------------------------------------------------
+
+    INSERT INTO public.account_deletion_requests (
+        user_id,
+        status
+    )
+    VALUES (
+        auth.uid(),
+        'pending'
+    )
+    RETURNING *
+    INTO v_request;
+
+
+    RETURN v_request;
+
+END;
+$$;
+
+
+REVOKE ALL
+ON FUNCTION public.request_account_deletion()
+FROM PUBLIC, anon, authenticated;
+
+
+GRANT EXECUTE
+ON FUNCTION public.request_account_deletion()
+TO authenticated;
+
+
+-- ============================================================
+-- 15.6 RPC — WORKER APRUEBA / RECHAZA
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.resolve_account_deletion(
+    p_request_id UUID,
+    p_decision TEXT,
+    p_rejection_reason TEXT DEFAULT NULL
+)
+RETURNS public.account_deletion_requests
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_request public.account_deletion_requests;
+    v_target_profile public.profiles;
+BEGIN
+
+    -- --------------------------------------------------------
+    -- AUTENTICACIÓN
+    -- --------------------------------------------------------
+
+    IF auth.uid() IS NULL THEN
+        RAISE EXCEPTION
+            'Usuario no autenticado';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- SOLO WORKER ACTIVO DE MODIRA
+    -- --------------------------------------------------------
+
+    IF NOT public.current_user_is_worker() THEN
+        RAISE EXCEPTION
+            'Acceso denegado: se requiere un trabajador activo de MODIRA';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- VALIDAR REQUEST
+    -- --------------------------------------------------------
+
+    IF p_request_id IS NULL THEN
+        RAISE EXCEPTION
+            'La solicitud es obligatoria';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- VALIDAR DECISIÓN
+    -- --------------------------------------------------------
+
+    IF p_decision NOT IN (
+        'approved',
+        'rejected'
+    ) THEN
+        RAISE EXCEPTION
+            'Decisión no válida';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- VALIDAR MOTIVO DE RECHAZO
+    -- --------------------------------------------------------
+
+    IF p_decision = 'rejected'
+       AND p_rejection_reason IS NOT NULL
+       AND LENGTH(TRIM(p_rejection_reason)) > 1000
+    THEN
+        RAISE EXCEPTION
+            'El motivo de rechazo no puede superar los 1000 caracteres';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- OBTENER SOLICITUD Y BLOQUEARLA
+    -- --------------------------------------------------------
+
+    SELECT *
+    INTO v_request
+    FROM public.account_deletion_requests
+    WHERE id = p_request_id
+    FOR UPDATE;
+
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION
+            'Solicitud de eliminación no encontrada';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- SOLO SE PUEDE RESOLVER UNA SOLICITUD PENDING
+    -- --------------------------------------------------------
+
+    IF v_request.status <> 'pending' THEN
+        RAISE EXCEPTION
+            'La solicitud ya ha sido resuelta';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- EL USUARIO DEBE SEGUIR ASOCIADO
+    -- --------------------------------------------------------
+
+    IF v_request.user_id IS NULL THEN
+        RAISE EXCEPTION
+            'La solicitud no tiene un usuario asociado';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- OBTENER PERFIL
+    -- --------------------------------------------------------
+
+    SELECT *
+    INTO v_target_profile
+    FROM public.profiles
+    WHERE id = v_request.user_id;
+
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION
+            'Perfil del usuario solicitado no encontrado';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- SOLO CUENTAS DE CLIENTE
+    -- --------------------------------------------------------
+
+    IF v_target_profile.rol <> 'user' THEN
+        RAISE EXCEPTION
+            'La solicitud no corresponde a una cuenta de cliente';
+    END IF;
+
+
+    -- Protección adicional frente a cuentas worker.
+    IF EXISTS (
+        SELECT 1
+        FROM public.workers
+        WHERE auth_user_id = v_request.user_id
+    ) THEN
+        RAISE EXCEPTION
+            'No se puede eliminar una cuenta de trabajador mediante esta solicitud';
+    END IF;
+
+
+    -- ========================================================
+    -- RECHAZAR
+    -- ========================================================
+
+    IF p_decision = 'rejected' THEN
+
+        UPDATE public.account_deletion_requests
+        SET
+            status = 'rejected',
+            reviewed_at = CURRENT_TIMESTAMP,
+            reviewed_by = auth.uid(),
+            rejection_reason =
+                NULLIF(BTRIM(p_rejection_reason), '')
+        WHERE id = p_request_id
+        RETURNING *
+        INTO v_request;
+
+
+        RETURN v_request;
+
+    END IF;
+
+
+    -- ========================================================
+    -- APROBAR
+    -- ========================================================
+    --
+    -- IMPORTANTE:
+    --
+    -- Aquí NO se elimina auth.users.
+    --
+    -- La Edge Function será responsable de realizar las
+    -- comprobaciones definitivas y ejecutar el borrado real.
+    --
+    -- ========================================================
+
+    UPDATE public.account_deletion_requests
+    SET
+        status = 'approved',
+        reviewed_at = CURRENT_TIMESTAMP,
+        reviewed_by = auth.uid(),
+        rejection_reason = NULL
+    WHERE id = p_request_id
+    RETURNING *
+    INTO v_request;
+
+
+    RETURN v_request;
+
+END;
+$$;
+
+
+REVOKE ALL
+ON FUNCTION public.resolve_account_deletion(
+    UUID,
+    TEXT,
+    TEXT
+)
+FROM PUBLIC, anon, authenticated;
+
+
+GRANT EXECUTE
+ON FUNCTION public.resolve_account_deletion(
+    UUID,
+    TEXT,
+    TEXT
+)
+TO authenticated;
+
+
+-- ============================================================
+-- 15.7 DOCUMENTACIÓN
+-- ============================================================
+
+COMMENT ON TABLE public.account_deletion_requests
+IS
+'Solicitudes de eliminación de cuentas de clientes. El cliente solicita la eliminación y un trabajador activo de MODIRA puede aprobarla o rechazarla.';
+
+
+COMMENT ON COLUMN public.account_deletion_requests.status
+IS
+'pending=pendiente; approved=aprobada por worker; rejected=rechazada por worker; blocked=bloqueada por reglas de negocio; completed=eliminación completada; failed=fallo técnico durante el proceso.';
+
+
+COMMENT ON FUNCTION public.request_account_deletion()
+IS
+'Permite a un cliente activo solicitar la eliminación de su propia cuenta.';
+
+
+COMMENT ON FUNCTION public.resolve_account_deletion(UUID, TEXT, TEXT)
+IS
+'Permite a un trabajador activo de MODIRA aprobar o rechazar una solicitud de eliminación. La aprobación permite al backend iniciar el proceso definitivo de eliminación.';
+
+
+-- ============================================================
+-- 15.8 VALIDACIONES
+-- ============================================================
+
+DO $$
+DECLARE
+    v_count INTEGER;
+BEGIN
+
+    -- --------------------------------------------------------
+    -- TABLA
+    -- --------------------------------------------------------
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'account_deletion_requests'
+    ) THEN
+        RAISE EXCEPTION
+            '016 failed: account_deletion_requests table missing';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- RLS
+    -- --------------------------------------------------------
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_class
+        WHERE oid = 'public.account_deletion_requests'::regclass
+          AND relrowsecurity = TRUE
+    ) THEN
+        RAISE EXCEPTION
+            '016 failed: account_deletion_requests RLS missing';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- RPC CLIENTE
+    -- --------------------------------------------------------
+
+    IF to_regprocedure(
+        'public.request_account_deletion()'
+    ) IS NULL THEN
+        RAISE EXCEPTION
+            '016 failed: request_account_deletion() missing';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- RPC WORKER
+    -- --------------------------------------------------------
+
+    IF to_regprocedure(
+        'public.resolve_account_deletion(uuid,text,text)'
+    ) IS NULL THEN
+        RAISE EXCEPTION
+            '016 failed: resolve_account_deletion(uuid,text,text) missing';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- POLICIES
+    -- --------------------------------------------------------
+
+    SELECT COUNT(*)
+    INTO v_count
+    FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'account_deletion_requests'
+      AND policyname IN (
+          'account_deletion_requests_client_select',
+          'account_deletion_requests_worker_select'
+      );
+
+
+    IF v_count <> 2 THEN
+        RAISE EXCEPTION
+            '016 failed: account deletion policies incomplete';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- CONSTRAINT DE ESTADOS
+    -- --------------------------------------------------------
+
+    SELECT COUNT(*)
+    INTO v_count
+    FROM pg_constraint
+    WHERE conrelid =
+        'public.account_deletion_requests'::regclass
+      AND conname =
+        'account_deletion_requests_status_check';
+
+
+    IF v_count <> 1 THEN
+        RAISE EXCEPTION
+            '016 failed: account deletion status constraint missing';
+    END IF;
+
+END $$;
 -- ============================================================
 -- 15. PROTEGER PROFILES CONTRA AUTO-DESBLOQUEO
 -- ============================================================

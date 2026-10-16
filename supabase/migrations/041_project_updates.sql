@@ -576,19 +576,22 @@ TO authenticated;
 --
 -- Permite al worker corregir una novedad ya publicada.
 --
--- IMPORTANTE:
+-- Al modificarla:
 --
--- NO genera una segunda notificación.
+--   project_updates
+--          │
+--          ├── se actualiza la novedad
+--          │
+--          └── se genera una nueva notificación
+--               para el cliente del proyecto.
 --
--- Si el worker corrige:
+-- El destinatario se obtiene internamente mediante:
 --
--- "Diseño aprobad"
+--   project_updates.project_id
+--              ↓
+--          projects.user_id
 --
--- por:
---
--- "Diseño aprobado"
---
--- no queremos bombardear al cliente con otra notificación.
+-- El worker nunca proporciona el user_id del destinatario.
 --
 -- ============================================================
 
@@ -626,6 +629,16 @@ BEGIN
     IF NOT public.current_user_is_worker() THEN
         RAISE EXCEPTION
             'Acceso denegado: se requiere un trabajador activo';
+    END IF;
+
+
+    -- --------------------------------------------------------
+    -- ID
+    -- --------------------------------------------------------
+
+    IF p_update_id IS NULL THEN
+        RAISE EXCEPTION
+            'La novedad es obligatoria';
     END IF;
 
 
@@ -685,6 +698,30 @@ BEGIN
     INTO v_update;
 
 
+    -- --------------------------------------------------------
+    -- NOTIFICAR AL CLIENTE
+    --
+    -- El destinatario se obtiene internamente a partir de:
+    --
+    -- project_id
+    --     ↓
+    -- projects.user_id
+    --
+    -- El worker nunca proporciona el user_id del destinatario.
+    -- --------------------------------------------------------
+
+    PERFORM public.emit_project_client_notification(
+        v_update.project_id,
+        'project_update',
+        v_update.titulo,
+        'Se ha modificado una actualización de tu proyecto.',
+        jsonb_build_object(
+            'project_update_id', v_update.id,
+            'event', 'project_update_updated'
+        )
+    );
+
+
     RETURN v_update;
 
 END;
@@ -711,7 +748,6 @@ ON FUNCTION public.update_project_update(
     TEXT
 )
 TO authenticated;
-
 
 -- ============================================================
 -- 9. RPC — ELIMINAR NOVEDAD
@@ -850,8 +886,7 @@ COMMENT ON FUNCTION public.update_project_update(
     TEXT
 )
 IS
-'Modifica una actualización existente. No genera una nueva notificación. Solo puede ejecutarla un trabajador activo.';
-
+'Modifica una actualización existente y genera una nueva notificación para el cliente del proyecto. Solo puede ejecutarla un trabajador activo.';
 
 COMMENT ON FUNCTION public.delete_project_update(
     UUID
